@@ -4,48 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { Grade, Member, Match } from "./types";
 
 const STORAGE_KEY = "badminton-members";
-const EVENT_STORAGE_KEY = "badminton-event";
 const PRIMARY = "#3b82f6";
 const PRIMARY_LIGHT = "#eff6ff";
-
-interface EventInfo {
-  location: string;
-  dateTime: string;
-}
-
-function loadEvent(): EventInfo {
-  if (typeof window === "undefined") return { location: "", dateTime: "" };
-  try {
-    const raw = localStorage.getItem(EVENT_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as EventInfo;
-      return { location: parsed?.location ?? "", dateTime: parsed?.dateTime ?? "" };
-    }
-  } catch {}
-  return { location: "", dateTime: "" };
-}
-
-function saveEvent(info: EventInfo) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(EVENT_STORAGE_KEY, JSON.stringify(info));
-}
-
-function formatDateTime(iso: string): string {
-  if (!iso.trim()) return "";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    const day = d.getDate();
-    const h = d.getHours();
-    const min = d.getMinutes();
-    const week = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
-    return `${m}월 ${day}일 ${week} ${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
-  } catch {
-    return iso;
-  }
-}
 
 const GRADE_ORDER: Record<Grade, number> = { A: 0, B: 1, C: 2, D: 3 };
 
@@ -93,10 +53,19 @@ function saveMembers(members: Member[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
 }
 
-/** 참가 인원별 목표 경기 수 (多人轮转赛 기준: 6인 9경기, 8인 14경기 등) */
+/** 1라운드당 경기 수 (n명일 때 한 라운드에 나오는 대진 수) */
+function getGamesPerRound(n: number): number {
+  if (n < 2) return 0;
+  const pairs = Math.floor(n / 2);
+  return Math.floor((pairs * (pairs - 1)) / 2);
+}
+
+/** 참가 인원별 목표 경기 수. 공평을 위해 "완전한 라운드"만 사용 → 인당 경기 수 동일 */
 function getTargetTotalGames(n: number): number {
-  const table: Record<number, number> = {
-    4: 2,
+  const gamesPerRound = getGamesPerRound(n);
+  if (gamesPerRound <= 0) return 0;
+  const desired: Record<number, number> = {
+    4: 3, // 4명 → 중복 없이 가능한 2:2 대진 3경기 (ABvsCD, ACvsBD, ADvsBC)
     5: 5,
     6: 9,
     7: 14,
@@ -106,13 +75,23 @@ function getTargetTotalGames(n: number): number {
     11: 33,
     12: 33,
   };
-  if (table[n] !== undefined) return table[n];
-  if (n <= 12) return 33;
-  return Math.min(33, Math.floor((n * 11) / 4));
+  const want = desired[n] ?? Math.min(33, Math.floor((n * 11) / 4));
+  return Math.max(gamesPerRound, Math.floor(want / gamesPerRound) * gamesPerRound);
 }
 
-/** 라운드 r에서의 파트너 짝 (0 고정, 나머지 로테이션) */
+/** 라운드 r에서의 파트너 짝. 홀수 명이면 매 라운드 '한 명 쉬기'를 로테이션해 인당 경기 수 동일하게 함 */
 function getPairsInRound(n: number, r: number): [number, number][] {
+  if (n % 2 === 1) {
+    // 홀수 명: 라운드마다 한 명이 쉼 → 그 사람을 로테이션 (r % n)
+    const bye = r % n;
+    const playing = Array.from({ length: n }, (_, i) => i).filter((i) => i !== bye);
+    const pairs: [number, number][] = [];
+    for (let i = 0; i < playing.length; i += 2) {
+      if (i + 1 < playing.length) pairs.push([playing[i], playing[i + 1]]);
+    }
+    return pairs;
+  }
+  // 짝수 명: 기존 로직 (0 고정, 나머지 로테이션)
   const others = Array.from({ length: n - 1 }, (_, i) => i + 1);
   const pairedWithZero = 1 + (r % (n - 1));
   const rest = others.filter((x) => x !== pairedWithZero);
@@ -123,19 +102,18 @@ function getPairsInRound(n: number, r: number): [number, number][] {
   return pairs;
 }
 
-/** 라운드로빈 더블스: 목표 경기 수만큼만 대진 생성 (모두가 골고루 한 번씩 짝을 이루는 방식) */
+/** 라운드로빈 더블스: 완전한 라운드만 추가해 인당 경기 수 동일하게 대진 생성 */
 function buildRoundRobinMatches(members: Member[], targetTotal: number): Match[] {
   const n = members.length;
   const matches: Match[] = [];
-  const gamesPerRound = n >= 2 ? Math.floor((n / 2) * (n / 2 - 1) / 2) : 0;
+  const gamesPerRound = getGamesPerRound(n);
   if (gamesPerRound <= 0) return matches;
 
-  let round = 0;
-  while (matches.length < targetTotal) {
+  const numRounds = Math.floor(targetTotal / gamesPerRound);
+  for (let round = 0; round < numRounds; round++) {
     const pairs = getPairsInRound(n, round);
     for (let i = 0; i < pairs.length; i++) {
       for (let j = i + 1; j < pairs.length; j++) {
-        if (matches.length >= targetTotal) break;
         const [a, b] = pairs[i];
         const [c, d] = pairs[j];
         matches.push({
@@ -148,7 +126,6 @@ function buildRoundRobinMatches(members: Member[], targetTotal: number): Match[]
         });
       }
     }
-    round++;
   }
   return matches;
 }
@@ -171,55 +148,45 @@ function AddMemberForm({
   };
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs text-slate-500 mb-1">참가 인원 추가</p>
-      <h2 className="text-base font-semibold text-slate-800 mb-3">새 참가자 등록</h2>
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <div>
-          <label className="block text-xs text-slate-500 mb-1">이름</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="이름 입력"
-            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">성별</label>
-            <select
-              value={gender}
-              onChange={(e) => setGender(e.target.value as "M" | "F")}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-            >
-              <option value="M">남</option>
-              <option value="F">여</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">급수</label>
-            <select
-              value={grade}
-              onChange={(e) => setGrade(e.target.value as Grade)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-200"
-            >
-              <option value="A">A</option>
-              <option value="B">B</option>
-              <option value="C">C</option>
-              <option value="D">D</option>
-            </select>
-          </div>
-        </div>
-        <button
-          type="submit"
-          className="w-full py-2.5 rounded-xl font-medium text-white hover:opacity-90"
-          style={{ backgroundColor: primaryColor }}
-        >
-          추가
-        </button>
-      </form>
-    </section>
+    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-1.5">
+      <div className="flex-1 min-w-0">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="이름"
+          aria-label="이름"
+          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 placeholder:text-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+        />
+      </div>
+      <select
+        value={gender}
+        onChange={(e) => setGender(e.target.value as "M" | "F")}
+        aria-label="성별"
+        className="shrink-0 w-14 px-1.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+      >
+        <option value="M">남</option>
+        <option value="F">여</option>
+      </select>
+      <select
+        value={grade}
+        onChange={(e) => setGrade(e.target.value as Grade)}
+        aria-label="급수"
+        className="shrink-0 w-12 px-1.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+      >
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+        <option value="D">D</option>
+      </select>
+      <button
+        type="submit"
+        className="shrink-0 py-1.5 px-3 rounded-lg font-medium text-white text-sm hover:opacity-90"
+        style={{ backgroundColor: primaryColor }}
+      >
+        추가
+      </button>
+    </form>
   );
 }
 
@@ -228,18 +195,11 @@ export default function Home() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [scoreInputs, setScoreInputs] = useState<Record<string, { s1: string; s2: string }>>({});
   const [mounted, setMounted] = useState(false);
-  const [eventLocation, setEventLocation] = useState("");
-  const [eventDateTime, setEventDateTime] = useState("");
-  const [editingField, setEditingField] = useState<"location" | "datetime" | null>(null);
-  const [editTemp, setEditTemp] = useState("");
   /** 사용자가 선택한 '진행중' 매치 id 목록 (여러 코트 병렬 진행 가능) */
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
 
   useEffect(() => {
     setMembers(loadMembers());
-    const e = loadEvent();
-    setEventLocation(e.location);
-    setEventDateTime(e.dateTime);
     setMounted(true);
   }, []);
 
@@ -247,25 +207,6 @@ export default function Home() {
     if (!mounted) return;
     saveMembers(members);
   }, [members, mounted]);
-
-  useEffect(() => {
-    if (!mounted) return;
-    saveEvent({ location: eventLocation, dateTime: eventDateTime });
-  }, [eventLocation, eventDateTime, mounted]);
-
-  const openEdit = (field: "location" | "datetime") => {
-    setEditingField(field);
-    setEditTemp(field === "location" ? eventLocation : eventDateTime);
-  };
-
-  const confirmEdit = () => {
-    if (editingField === "location") {
-      setEventLocation(editTemp.trim());
-    } else if (editingField === "datetime") {
-      setEventDateTime(editTemp.trim());
-    }
-    setEditingField(null);
-  };
 
   const doMatch = useCallback(() => {
     if (members.length < 4) return;
@@ -279,6 +220,10 @@ export default function Home() {
     setMatches(newMatches);
     setScoreInputs(inputs);
     setSelectedPlayingMatchIds([]);
+    /** 대진 새로 만들면 오늘의 랭킹도 리셋 (승/패/득실차 0) */
+    setMembers((prev) =>
+      prev.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }))
+    );
   }, [members]);
 
   const saveResult = useCallback(
@@ -466,149 +411,51 @@ export default function Home() {
     <div className="min-h-screen bg-slate-50 text-slate-800 max-w-md mx-auto flex flex-col">
       {/* 헤더: 로고 + 앱명 */}
       <header className="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
-        <div className="flex items-center gap-2 px-4 py-3">
-          <span className="text-2xl" aria-hidden>🏸</span>
-          <div>
-            <h1 className="text-lg font-bold text-slate-800">배드민턴</h1>
-            <p className="text-xs text-slate-500">2:2 매칭 · 랭킹</p>
+        <div className="flex items-center justify-between gap-2 px-2 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl" aria-hidden>🏸</span>
+            <div>
+              <h1 className="text-xl font-bold text-slate-800">개인전 - 랭킹</h1>
+            </div>
           </div>
-        </div>
-        {/* 탭 */}
-        <div className="flex px-2 pb-2 gap-1">
-          <button
-            type="button"
-            onClick={() => scrollTo("section-info")}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white"
-            style={{ backgroundColor: PRIMARY }}
-          >
-            모임정보
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollTo("section-members")}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200"
-          >
-            참가인원
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollTo("section-matches")}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200"
-          >
-            대진
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollTo("section-ranking")}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200"
-          >
-            랭킹
-          </button>
         </div>
       </header>
 
-      <main className="flex-1 px-4 pb-24 space-y-5">
-        {/* 모임 정보 (장소·시간·참가) - 참고 이미지 스타일 */}
-        <section id="section-info" className="scroll-mt-4 pt-4">
-          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-              <span className="text-red-500 text-lg leading-none">▸</span>
-              <div>
-                <h2 className="text-base font-semibold text-slate-800">모임 정보</h2>
-                <p className="text-xs text-slate-500">2:2 매칭 (4명 이상)</p>
-              </div>
+      <main className="flex-1 px-2 pb-20 space-y-2">
+        {/* 게임 정보 (대진 구성 설명) */}
+        <section id="section-info" className="scroll-mt-2 pt-2">
+          <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-2 py-1.5 border-b border-slate-100">
+              <h2 className="text-base font-semibold text-slate-800">게임 정보</h2>
+              <p className="text-xs text-slate-500">개인전 (4명 이상)</p>
             </div>
-            <div className="divide-y divide-slate-100">
-              {/* 날짜·시간 행 */}
-              <div className="px-4 py-0">
-                <button
-                  type="button"
-                  onClick={() => openEdit("datetime")}
-                  className="flex items-center gap-3 w-full py-3 text-left"
-                >
-                  <span className="text-slate-400 text-lg shrink-0">🕐</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500">날짜·시간</p>
-                    <p className={`text-sm truncate ${eventDateTime ? "text-slate-800" : "text-slate-400"}`}>
-                      {eventDateTime ? formatDateTime(eventDateTime) : "날짜와 시간을 선택하세요"}
-                    </p>
-                  </div>
-                  <span className="text-slate-300 shrink-0">›</span>
-                </button>
-                {editingField === "datetime" && (
-                  <div className="px-4 pb-3 flex gap-2">
-                    <input
-                      type="datetime-local"
-                      value={editTemp}
-                      onChange={(e) => setEditTemp(e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={confirmEdit}
-                      className="py-2 px-4 rounded-xl text-sm font-medium text-white shrink-0"
-                      style={{ backgroundColor: PRIMARY }}
-                    >
-                      확인
-                    </button>
-                  </div>
-                )}
-              </div>
-              {/* 장소 행 */}
-              <div className="px-4 py-0">
-                <button
-                  type="button"
-                  onClick={() => openEdit("location")}
-                  className="flex items-center gap-3 w-full py-3 text-left"
-                >
-                  <span className="text-slate-400 text-lg shrink-0">📍</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500">장소</p>
-                    <p className={`text-sm truncate ${eventLocation ? "text-slate-800" : "text-slate-400"}`}>
-                      {eventLocation || "장소를 입력하세요"}
-                    </p>
-                  </div>
-                  <span className="text-slate-300 shrink-0">›</span>
-                </button>
-                {editingField === "location" && (
-                  <div className="px-4 pb-3 flex gap-2">
-                    <input
-                      type="text"
-                      value={editTemp}
-                      onChange={(e) => setEditTemp(e.target.value)}
-                      placeholder="예: 강남구 · OO체육관"
-                      className="flex-1 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={confirmEdit}
-                      className="py-2 px-4 rounded-xl text-sm font-medium text-white shrink-0"
-                      style={{ backgroundColor: PRIMARY }}
-                    >
-                      확인
-                    </button>
-                  </div>
-                )}
-              </div>
+            <div className="px-2 py-2 text-xs text-slate-600 space-y-1.5 leading-tight">
+              <p className="font-medium text-slate-700">참가 인원별 대진 구성</p>
+              <ul className="space-y-1 list-none pl-0 leading-snug">
+                <li className="flex gap-1.5"><span className="text-slate-400 shrink-0">·</span><span><strong className="text-slate-700">4명 이상</strong>이어야 대진 생성 가능 (2:2 한 경기당 4명)</span></li>
+                <li className="flex gap-1.5"><span className="text-slate-400 shrink-0">·</span><span><strong className="text-slate-700">짝수 명</strong> 2명씩 짝 지어 라운드로빈. 매 라운드 조를 바꿔 모두 골고루 대전.</span></li>
+                <li className="flex gap-1.5"><span className="text-slate-400 shrink-0">·</span><span><strong className="text-slate-700">홀수 명</strong> 매 라운드 한 명씩 로테이션으로 쉬기. 쉬는 사람을 돌려서 <span className="whitespace-nowrap">인당 경기 수 동일.</span></span></li>
+                <li className="flex gap-1.5"><span className="text-slate-400 shrink-0">·</span><span>예: <span className="whitespace-nowrap">4명→총 3경기(인당 3)</span>, <span className="whitespace-nowrap">5명→총 5경기(인당 4)</span>, <span className="whitespace-nowrap">6명→총 9경기(인당 6)</span></span></li>
+              </ul>
             </div>
           </div>
 
           {/* 참가 명단 카드 - 报名名单 스타일 */}
-          <div id="section-members" className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm mt-4 scroll-mt-4">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div id="section-members" className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm mt-2 scroll-mt-2">
+            <div className="px-2 py-1.5 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-800">참가 명단</h3>
                 <p className="text-xs text-slate-500">아래에서 참가 인원을 추가·삭제할 수 있습니다</p>
               </div>
-              <span className="shrink-0 px-2.5 py-1 rounded-full text-sm font-medium bg-blue-50 text-blue-600 border border-blue-100">
+              <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
                 {members.length}명
               </span>
             </div>
-            <div className="p-3 flex flex-wrap gap-2">
+            <div className="p-2 flex flex-wrap gap-1">
               {members.map((m, i) => (
                 <div
                   key={m.id}
-                  className="flex items-center gap-2 pl-2 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 min-w-[100px]"
+                  className="flex items-center gap-1.5 pl-1.5 pr-2 py-1.5 rounded-lg bg-slate-50 border border-slate-200 min-w-[80px]"
                 >
                   <span className="w-6 h-6 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-xs font-semibold">
                     {i + 1}
@@ -626,38 +473,50 @@ export default function Home() {
                 </div>
               ))}
             </div>
+            <div className="border-t border-slate-100 px-2 py-2">
+              <p className="text-xs text-slate-500 mb-1">새 참가자 등록</p>
+              <AddMemberForm onAdd={addMember} primaryColor={PRIMARY} />
+            </div>
+            <div className="border-t border-slate-100 px-2 py-2">
+              <p className="text-xs text-slate-500 mb-0.5">로테이션 대진</p>
+              <p className="text-xs text-slate-500 mb-1">
+                현재 {members.length}명 기준 목표 <strong className="text-slate-700">{members.length >= 4 ? getTargetTotalGames(members.length) : "-"}경기</strong>
+              </p>
+              <button
+                type="button"
+                onClick={doMatch}
+                disabled={members.length < 4}
+                className="w-full py-2 rounded-lg font-semibold text-white transition opacity-90 hover:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: PRIMARY }}
+              >
+                대진 생성 (4명 이상)
+              </button>
+              {members.length < 4 && (
+                <p className="text-xs text-slate-400 mt-1 text-center">참가 인원이 4명 이상이어야 합니다.</p>
+              )}
+            </div>
           </div>
-          <AddMemberForm onAdd={addMember} primaryColor={PRIMARY} />
         </section>
 
-        {/* 대진 생성 카드 */}
-        <section id="section-matches" className="scroll-mt-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-xs text-slate-500 mb-1">경기 생성</p>
-            <h2 className="text-base font-semibold text-slate-800 mb-2">로테이션 대진</h2>
-            <p className="text-xs text-slate-500 mb-3">
-              모두가 골고루 짝을 이루는 방식입니다. 현재 {members.length}명 기준 목표 경기 수:{" "}
-              <strong className="text-slate-700">{members.length >= 4 ? getTargetTotalGames(members.length) : "-"}경기</strong>
-            </p>
-            <button
-              type="button"
-              onClick={doMatch}
-              disabled={members.length < 4}
-              className="w-full py-3 rounded-xl font-semibold text-white transition opacity-90 hover:opacity-100 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: PRIMARY }}
-            >
-              대진 생성 (4명 이상)
-            </button>
-            {members.length < 4 && (
-              <p className="text-xs text-slate-400 mt-2 text-center">참가 인원이 4명 이상이어야 합니다.</p>
-            )}
-          </div>
-
-          {/* 매치 목록 - 1줄씩 */}
+        {/* 매치 목록 - 1줄씩 */}
+        <section id="section-matches" className="scroll-mt-2">
           {matches.length > 0 && (
-            <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm mt-3">
-              <div className="px-3 py-2 border-b border-slate-100">
-                <p className="text-xs text-slate-500 mb-1">오늘의 매치 · 총 {matches.length}경기</p>
+            <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm mt-2">
+              <div className="px-2 py-1.5 border-b border-slate-100">
+                <h3 className="text-base font-semibold text-slate-800">게임 현황</h3>
+              </div>
+              <div className="px-2 py-1 border-b border-slate-100">
+                {(() => {
+                  const perPerson =
+                    members.length > 0
+                      ? matches.filter((m) => getMatchPlayerIds(m).includes(members[0].id)).length
+                      : 0;
+                  return (
+                    <p className="text-xs text-slate-500">
+                      오늘의 매치 · 총 {matches.length}경기 · 인당 <span className="font-medium text-slate-700">{perPerson}</span>경기
+                    </p>
+                  );
+                })()}
                 {/* 총게임수 / 종료수 / 진행수 테이블 */}
                 {(() => {
                   const total = matches.length;
@@ -721,12 +580,9 @@ export default function Home() {
                   return (
                   <div
                     key={m.id}
-                    className={`flex flex-nowrap items-center gap-x-1 px-2 py-0 text-xs overflow-x-auto ${isCurrent ? "bg-amber-50/50 hover:bg-amber-50/70" : isPlayable ? "bg-green-50/90 hover:bg-green-50 ring-1 ring-green-300/60 rounded-r-lg" : "bg-white hover:bg-slate-50/80"}`}
+                    className={`flex flex-nowrap items-center gap-x-1 px-1.5 py-0.5 text-xs overflow-x-auto ${isCurrent ? "bg-amber-50/50 hover:bg-amber-50/70" : isPlayable ? "bg-green-50/90 hover:bg-green-50 ring-1 ring-green-300/60 rounded-r-lg" : "bg-white hover:bg-slate-50/80"}`}
                   >
-                    <span
-                      className="shrink-0 w-5 h-5 rounded flex items-center justify-center font-semibold text-white text-[10px]"
-                      style={{ backgroundColor: PRIMARY }}
-                    >
+                    <span className="shrink-0 w-5 h-5 rounded flex items-center justify-center font-semibold text-slate-600 bg-slate-200 text-[10px]">
                       {index + 1}
                     </span>
                     <button
@@ -797,76 +653,69 @@ export default function Home() {
           )}
         </section>
 
-        {/* 오늘의 랭킹 카드 */}
-        <section id="section-ranking" className="scroll-mt-4">
-          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-            <div className="px-4 py-3 border-b border-slate-100">
-              <p className="text-xs text-slate-500">오늘의 랭킹</p>
-              <h3 className="text-base font-semibold text-slate-800">승수 → 득실차 → 급수 순</h3>
+        {/* 게임 결과(랭킹) 카드 */}
+        <section id="section-ranking" className="scroll-mt-2">
+          <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm">
+            <div className="px-2 py-1.5 border-b border-slate-100">
+              <h3 className="text-base font-semibold text-slate-800">게임 결과</h3>
+              <p className="text-xs text-slate-500 mt-0.5">승수가 높을수록 위로, 같으면 득실차가 좋은 순, 그다음 급수 순으로 정렬됩니다.</p>
             </div>
             <ul className="divide-y divide-slate-100">
-              {ranking.map((m, i) => (
-                <li key={m.id} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50/80">
-                  <span
-                    className="w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0 text-white"
-                    style={{
-                      backgroundColor: i < 3 ? PRIMARY : "#94a3b8",
-                    }}
-                  >
-                    {i + 1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <span className="font-medium text-slate-800">{m.name}</span>
-                    <span className="text-slate-500 text-sm ml-1">({m.grade})</span>
-                  </div>
-                  <div className="text-right text-sm text-slate-600">
-                    <span className="text-blue-600 font-medium">{m.wins}승</span>
-                    <span className="text-slate-400 mx-1">/</span>
-                    <span className="text-red-500/90">{m.losses}패</span>
-                    <span className="text-slate-500 ml-1.5">
-                      {m.pointDiff >= 0 ? "+" : ""}{m.pointDiff}
+              {ranking.map((m, i) => {
+                const rank = i + 1;
+                const isTop3 = rank <= 3;
+                const rowBg =
+                  rank === 1
+                    ? "bg-gradient-to-r from-red-50 to-red-50/30"
+                    : rank === 2
+                      ? "bg-gradient-to-r from-amber-50 to-amber-50/30"
+                      : rank === 3
+                        ? "bg-gradient-to-r from-blue-50 to-blue-50/30"
+                        : "hover:bg-slate-50/80";
+                const rankBadgeClass =
+                  rank === 1
+                    ? "text-lg font-bold text-red-600 bg-red-100 rounded-xl"
+                    : rank === 2
+                      ? "text-lg font-bold text-amber-600 bg-amber-100 rounded-xl"
+                      : rank === 3
+                        ? "text-lg font-bold text-blue-600 bg-blue-100 rounded-xl"
+                        : "text-sm font-medium text-slate-800";
+                return (
+                  <li key={m.id} className={`flex items-center gap-2 px-2 py-0.5 ${rowBg}`}>
+                    <span
+                      className={`w-9 h-9 flex items-center justify-center flex-shrink-0 ${rankBadgeClass}`}
+                    >
+                      {rank}
                     </span>
-                  </div>
-                </li>
-              ))}
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-slate-800">{m.name}</span>
+                      <span className="text-slate-500 text-sm ml-1">({m.grade})</span>
+                    </div>
+                    <div className="text-right text-sm text-slate-600">
+                      <span className="text-blue-600 font-medium">{m.wins}승</span>
+                      <span className="text-slate-400 mx-1">/</span>
+                      <span className="text-red-500/90">{m.losses}패</span>
+                      <span className="text-slate-500 ml-1.5">
+                        {m.pointDiff >= 0 ? "+" : ""}{m.pointDiff}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </section>
       </main>
 
       {/* 하단 네비게이션 */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-around py-2 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-slate-200 flex justify-start px-2 py-1 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
         <button
           type="button"
           onClick={() => scrollTo("section-info")}
-          className="flex flex-col items-center gap-0.5 py-1 text-slate-600 hover:text-slate-900"
+          className="flex flex-col items-center gap-0 py-1 text-slate-600 hover:text-slate-900"
         >
           <span className="text-lg">📅</span>
-          <span className="text-[10px] font-medium">모임정보</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => scrollTo("section-members")}
-          className="flex flex-col items-center gap-0.5 py-1 text-slate-600 hover:text-slate-900"
-        >
-          <span className="text-lg">👥</span>
-          <span className="text-[10px] font-medium">참가인원</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => scrollTo("section-matches")}
-          className="flex flex-col items-center gap-0.5 py-1 text-slate-600 hover:text-slate-900"
-        >
-          <span className="text-lg">📋</span>
-          <span className="text-[10px] font-medium">대진</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => scrollTo("section-ranking")}
-          className="flex flex-col items-center gap-0.5 py-1 text-slate-600 hover:text-slate-900"
-        >
-          <span className="text-lg">🏆</span>
-          <span className="text-[10px] font-medium">랭킹</span>
+          <span className="text-[10px] font-medium text-center leading-tight">개인전 - 랭킹</span>
         </button>
       </nav>
     </div>
