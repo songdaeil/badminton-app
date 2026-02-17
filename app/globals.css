@@ -17,6 +17,22 @@
   --radius-sm: 0.75rem;
 }
 
+/* 뷰포트 폭에 비례한 유동 글자 크기: 폭이 좁아지면 글자도 작아져 줄바꿈 방지 (3.5vw ≈ 14px @ 400px) */
+html {
+  font-size: clamp(12px, 3.5vw, 16px);
+}
+
+/* 고정 px 대신 쓰는 유동 글자 크기 (vw 기반, min/max로 극단 방지) */
+.text-fluid-xs {
+  font-size: clamp(0.625rem, 2.5vw, 0.75rem);
+}
+.text-fluid-sm {
+  font-size: clamp(0.6875rem, 2.75vw, 0.8125rem);
+}
+.text-fluid-base {
+  font-size: clamp(0.8125rem, 3.25vw, 0.875rem);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
