@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dwv": "next dev --turbopack",
     "dev:open": "concurrently -k \"next dev --turbopack\" \"wait-on http://localhost:3000 && open http://localhost:3000\"",
     "browser": "open http://localhost:3000",
     "build": "next build",
