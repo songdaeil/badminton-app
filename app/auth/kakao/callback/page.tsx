@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getKakaoRedirectUri } from "@/lib/kakao";
@@ -7,7 +8,7 @@ import { getKakaoRedirectUri } from "@/lib/kakao";
 const KAKAO_PROFILE_PENDING_KEY = "kakao_profile_pending";
 const KAKAO_RETURN_TO_MYINFO_KEY = "kakao_return_to_myinfo";
 
-export default function AuthKakaoCallbackPage() {
+function CallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
@@ -89,5 +90,19 @@ export default function AuthKakaoCallbackPage() {
         </>
       )}
     </div>
+  );
+}
+
+export default function AuthKakaoCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[40vh] flex flex-col items-center justify-center p-4">
+          <p className="text-slate-600 text-sm animate-pulse">로그인 처리 중...</p>
+        </div>
+      }
+    >
+      <CallbackContent />
+    </Suspense>
   );
 }
