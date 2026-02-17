@@ -32,6 +32,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+head div {
+  font-weight: 300;
+}
+
 /* 카드 스타일 - Apple/토스 느낌 */
 .card-app {
   background: var(--card);
@@ -67,4 +71,9 @@ body {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+}
+
+/* 숫자 전용 폰트 (Arial Narrow) */
+.font-numeric {
+  font-family: "Arial Narrow", Arial, sans-serif;
 }

@@ -104,12 +104,12 @@ const TARGET_TOTAL_GAMES_TABLE: Record<number, number> = {
   12: 33,
 };
 
-/** 분 단위를 "약 N분" / "약 N시간 M분"으로 표시 */
+/** 분 단위를 "N분" / "N시간 M분"으로 표시 */
 function formatEstimatedDuration(totalMinutes: number): string {
-  if (totalMinutes < 60) return `약 ${totalMinutes}분`;
+  if (totalMinutes < 60) return `${totalMinutes}분`;
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  return m > 0 ? `약 ${h}시간 ${m}분` : `약 ${h}시간`;
+  return m > 0 ? `${h}시간 ${m}분` : `${h}시간`;
 }
 
 /** 30분 단위 시작 시간 옵션 (00:00 ~ 23:30) */
@@ -338,6 +338,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [highlightMemberId, setHighlightMemberId] = useState<string | null>(null);
   /** 카카오 로그인 진행 중 / 메시지 */
   const [kakaoLoginStatus, setKakaoLoginStatus] = useState<string | null>(null);
+  /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
+  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
 
   const effectiveGameId = gameId ?? selectedGameId;
   const gameMode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
@@ -716,10 +718,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
       {/* 헤더 - Apple 스타일: 블러, 미니멀 */}
       <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-xl border-b border-[#e8e8ed] safe-area-pb">
         <div className="flex items-center gap-3 px-3 py-4">
-          <span className="text-2xl" aria-hidden>
-            {navView === "setting" && "📅"}
-            {navView === "record" && "📋"}
-            {navView === "myinfo" && "👤"}
+          <span className="text-2xl flex items-center shrink-0" aria-hidden>
+            {navView === "setting" && <img src="/game-mode-icon.png?v=2" alt="" className="w-12 h-12 object-contain" />}
+            {navView === "record" && <img src="/game-list-icon.png" alt="" className="w-12 h-12 object-contain" />}
+            {navView === "myinfo" && <img src="/myinfo-icon.png" alt="" className="w-12 h-12 object-contain" />}
           </span>
           <h1 className="text-[1.25rem] font-semibold tracking-tight text-[#1d1d1f]">
             {navView === "setting" && "경기 방식"}
@@ -731,91 +733,75 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
       <main className="flex-1 px-2 pb-24 overflow-auto">
         {navView === "setting" && (
-        <div className="space-y-2 pt-2">
+        <div className="space-y-2 pt-4">
         {/* 경기 방식만: 선정 후 목록에 추가 */}
         <section id="section-info" className="scroll-mt-2">
-          <p className="text-sm text-slate-600 mb-1.5">원하는 경기 방식을 경기 목록에 추가하여 경기 관리 및 배포 할 수 있습니다</p>
+          <p className="text-sm text-slate-600 leading-snug mb-1.5">원하는 경기 방식을 경기 목록에 추가하여 경기 관리 및 배포 할 수 있습니다</p>
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
             <div className="px-3 py-1.5 border-b border-[#e8e8ed]">
+              <p className="text-xs text-slate-500 mb-2">보유 경기 방식 수 : <span className="font-numeric">{GAME_MODES.length}</span> 개</p>
               <div>
-                {!myInfo.profileImageUrl ? (
-                  <>
-                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2 text-center">
-                      경기을 만들려면 나의 정보에서 카카오 로그인이 필요합니다.
-                    </p>
-                    <button
-                      type="button"
-                      disabled
-                      className="w-full py-1.5 rounded-xl font-semibold text-slate-400 bg-slate-200 cursor-not-allowed"
-                    >
-                      아래 경기 방식으로 경기 목록에 추가
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={addGameToRecord}
-                    className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors"
-                  >
-                    아래 경기 방식으로 경기 목록에 추가
-                  </button>
-                )}
-              </div>
-              <div className="mt-2 flex flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <label htmlFor="game-mode" className="text-[13px] text-[#6e6e73] shrink-0 py-0.5 leading-tight">경기 방식</label>
-                  <select
-                    id="game-mode"
-                    value={gameModeId}
-                    onChange={(e) => {
-                      const nextId = e.target.value;
-                      setGameModeId(nextId);
-                      const nextMode = GAME_MODES.find((m) => m.id === nextId) ?? GAME_MODES[0];
-                      const defaultScore = nextMode.defaultScoreLimit ?? 21;
-                      setGameSettings((prev) => ({
-                        ...prev,
-                        scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore,
-                      }));
-                    }}
-                    className="text-sm font-semibold text-[#1d1d1f] px-3 py-1.5 rounded-xl border-2 border-[#0071e3]/30 bg-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                    aria-label="경기 방식 선택"
-                  >
-                    {GAME_MODES.map((mode) => (
-                      <option key={mode.id} value={mode.id}>
-                        {mode.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <p className="text-xs text-slate-500">보유 경기 방식 수 : {GAME_MODES.length} 개</p>
+                <button
+                  type="button"
+                  onClick={addGameToRecord}
+                  className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors"
+                >
+                  아래 경기 방식으로 경기 목록에 추가
+                </button>
               </div>
             </div>
             <div className="px-3 py-2 text-[13px] text-[#6e6e73] space-y-1 leading-relaxed">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <label htmlFor="game-mode" className="text-[13px] text-[#6e6e73] shrink-0 py-0.5 leading-tight">경기 방식</label>
+                <select
+                  id="game-mode"
+                  value={gameModeId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setGameModeId(nextId);
+                    const nextMode = GAME_MODES.find((m) => m.id === nextId) ?? GAME_MODES[0];
+                    const defaultScore = nextMode.defaultScoreLimit ?? 21;
+                    setGameSettings((prev) => ({
+                      ...prev,
+                      scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore,
+                    }));
+                  }}
+                  className="text-sm font-semibold text-[#1d1d1f] px-3 py-1.5 rounded-xl border-2 border-[#0071e3]/30 bg-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  aria-label="경기 방식 선택"
+                >
+                  {GAME_MODES.map((mode) => (
+                    <option key={mode.id} value={mode.id}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <p className="font-medium text-slate-700 mb-0.5">경기 방식 설명</p>
-              <div className="space-y-1.5 text-slate-600">
+              <div className="space-y-1 text-slate-600">
                 <p className="leading-relaxed">
-                  <strong className="text-slate-700">몇 명이 모이느냐</strong>에 따라 <strong className="text-slate-700">총 경기 수</strong>와 <strong className="text-slate-700">한 사람당 치르는 경기 수</strong>가 정해져 있어요. 아래 표처럼요.
+                  인원에 따라 총 경기 수와 인당 경기 수가 아래 표처럼 정해져 있으며, 참가자는 모두 동일한 경기 수로 공정하게 진행합니다.
                 </p>
                 <p className="leading-relaxed">
-                  한 경기는 2명 vs 2명이라 <strong className="text-slate-700">한 경기마다 4명</strong>이 나가요. 그래서 인원이 정해지면, &quot;총 몇 경기 할지&quot;, &quot;한 사람이 몇 경기 나갈지&quot;를 맞춰 두었어요. <strong className="text-slate-700">참가한 분들은 모두 같은 횟수만큼</strong> 경기에 나가서 공정해요.
-                </p>
-                <p className="leading-relaxed">
-                  그리고 <strong className="text-slate-700">같이 짝 되는 사람(파트너)</strong>도, <strong className="text-slate-700">맞서게 되는 상대</strong>도 경기마다 바꿔 가며 돌려요. 한두 명만 자꾸 붙는 일 없이, 여러 분과 골고루 짝이 되고 상대도 하게 되어 있어요.
-                </p>
-                <p className="leading-relaxed text-slate-700">
-                  이렇게 인원에 맞춰 참가를 구성해서 게임하면, 누구나 같은 기회로 즐길 수 있어서 재미있을 거예요.
+                  파트너와 상대를 경기마다 바꿔 가며 여러 분과 골고루 대전할 수 있습니다.
                 </p>
               </div>
-              <p className="font-medium text-slate-700 mt-2 mb-0.5">인원수별 총 경기 수</p>
-              <p className="text-xs text-slate-500 mb-0.5">아래 표: 인원에 따라 총 경기 수와 한 사람당 경기 수(인당경기수)가 이렇게 정해져 있어요.</p>
+              <p className="font-medium text-slate-700 mt-2 mb-0.5">인원수 별 총 경기수 및 소요시간</p>
               <div className="overflow-x-auto mt-0.5">
-                <table className="w-full border-collapse text-sm text-slate-600 leading-tight">
+                <table className="w-full table-fixed border-collapse text-xs text-slate-600 leading-tight font-numeric">
+                  <colgroup>
+                    <col style={{ width: "20%" }} />
+                    <col style={{ width: "20%" }} />
+                    <col style={{ width: "20%" }} />
+                    <col style={{ width: "20%" }} />
+                    <col style={{ width: "20%" }} />
+                  </colgroup>
                   <thead>
                     <tr className="bg-slate-100">
                       <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">인원</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">경기수</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">인당경기수</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">최소 소요시간</th>
+                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">총 경기수</th>
+                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">인당 경기수</th>
+                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">소요시간</th>
+                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">필요코트</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -825,13 +811,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       const maxCourts = getMaxCourts(n);
                       const totalMinutesRaw = total * MINUTES_PER_21PT_GAME;
                       const minutesForMaxCourts = Math.ceil(totalMinutesRaw / maxCourts);
-                      const timeLabel = `${formatEstimatedDuration(minutesForMaxCourts)} (${maxCourts}코트)`;
+                      const durationLabel = formatEstimatedDuration(minutesForMaxCourts);
+                      const courtLabel = maxCourts;
                       return (
                         <tr key={n} className="even:bg-slate-50">
                           <td className="border border-slate-200 px-2 py-0 text-center">{n}</td>
                           <td className="border border-slate-200 px-2 py-0 text-center">{total}</td>
                           <td className="border border-slate-200 px-2 py-0 text-center">{perPerson}</td>
-                          <td className="border border-slate-200 px-2 py-0 text-center text-slate-600">{timeLabel}</td>
+                          <td className="border border-slate-200 px-2 py-0 text-center text-slate-600">{durationLabel}</td>
+                          <td className="border border-slate-200 px-2 py-0 text-center text-slate-600">{courtLabel}</td>
                         </tr>
                       );
                     })}
@@ -847,7 +835,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {navView === "record" && !selectedGameId && (
         /* 경기 목록: 경기 목록 */
         <div className="pt-4 space-y-0.5">
-          <p className="text-sm text-slate-600 leading-snug">선택한 경기 방식이 여기 목록으로 추가됩니다. 항목을 누르면 설정·명단·대진을 할 수 있습니다.</p>
+          <p className="text-sm text-slate-600 leading-snug mb-1.5">선택한 경기 방식이 여기 목록으로 추가됩니다. 항목을 누르면 설정·명단·대진을 할 수 있습니다.</p>
           {(() => {
             const gameIds = loadGameList();
             const sortedIds = [...gameIds].sort((a, b) => {
@@ -912,15 +900,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors"
                     >
                       {/* 1행: 경기 이름 한 줄 */}
-                      <p className="font-semibold text-slate-800 truncate text-sm leading-tight" title={titleLabel}>{titleLabel}</p>
+                      <p className="font-semibold text-slate-800 truncate text-sm leading-tight font-numeric" title={titleLabel}>{titleLabel}</p>
                       {/* 가상의 세로선 기준: 좌측=만든이·날짜·경기방식, 우측=뱃지·테이블(여백 없이 붙임) */}
-                      <div className="flex items-start gap-2 mt-0">
-                        <div className="min-w-0 flex-1 space-y-px">
-                          <p className="text-[11px] text-slate-500 leading-tight">만든 이: {creatorDisplay}</p>
+                      <div className="flex items-start gap-0.5 mt-0">
+                        <div className="min-w-0 shrink-0 space-y-px">
                           <p className="text-[11px] text-slate-500 leading-tight">
-                            {dateStr && <span>{dateStr}</span>}
-                            {dateStr && <span className="ml-1">·</span>}
-                            <span className={dateStr ? "ml-1" : ""}>{data.members.length}명 · {data.matches.length}경기</span>
+                            만든 이: {creatorDisplay}{dateStr ? ` ${dateStr}` : ""}
+                          </p>
+                          <p className="text-[11px] text-slate-500 leading-tight font-numeric">
+                            {data.members.length}명 · {data.matches.length}경기
+                            {data.members.length > 0 && ` · 인당 ${Math.round((data.matches.length * 4) / data.members.length)}경기`}
                           </p>
                           <p className="text-[11px] text-slate-500 leading-tight">경기 방식: {modeLabel}</p>
                         </div>
@@ -929,26 +918,26 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             {stages.map((s) => (
                               <span
                                 key={s}
-                                className={`text-[9px] font-medium px-1.5 py-0 rounded-full shrink-0 leading-none ${s === currentStage ? stageHighlight[s] : stageMuted}`}
+                                className={`text-xs font-medium px-1.5 py-0 rounded-full shrink-0 leading-none ${s === currentStage ? stageHighlight[s] : stageMuted}`}
                               >
                                 {s.replace("단계", "")}
                               </span>
                             ))}
                           </div>
                           {total > 0 && (
-                            <table className="w-max text-[11px] border border-slate-200 rounded overflow-hidden">
+                            <table className="w-max text-xs border border-slate-200 rounded overflow-hidden font-numeric">
                               <tbody>
                                 <tr className={tableHeaderClass}>
-                                  <th className="py-0 px-1 text-center font-medium leading-none">총경기수</th>
-                                  <th className={`py-0 px-1 text-center font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>종료수</th>
-                                  <th className={`py-0 px-1 text-center font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>진행수</th>
-                                  <th className={`py-0 px-1 text-center font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>대기수</th>
+                                  <th className="py-0 pl-1 pr-0.5 text-left font-medium leading-none">총경기수</th>
+                                  <th className={`py-0 pl-1 pr-0.5 text-left font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>종료수</th>
+                                  <th className={`py-0 pl-1 pr-0.5 text-left font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>진행수</th>
+                                  <th className={`py-0 pl-1 pr-0.5 text-left font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>대기수</th>
                                 </tr>
                                 <tr className="border-t border-[#e8e8ed] bg-white text-slate-700">
-                                  <td className="py-0 px-1 text-center font-medium leading-none">{total} <span className="text-slate-500 font-normal">({pct(total)}%)</span></td>
-                                  <td className="py-0 px-1 text-center font-medium border-l border-slate-100 leading-none">{completedCount} <span className="text-slate-500 font-normal">({pct(completedCount)}%)</span></td>
-                                  <td className="py-0 px-1 text-center font-medium border-l border-slate-100 leading-none">{ongoingCount} <span className="text-slate-500 font-normal">({pct(ongoingCount)}%)</span></td>
-                                  <td className="py-0 px-1 text-center font-medium border-l border-slate-100 leading-none">{waitingCount} <span className="text-slate-500 font-normal">({pct(waitingCount)}%)</span></td>
+                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium leading-none">{total} <span className="text-slate-500 font-normal">({pct(total)}%)</span></td>
+                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium border-l border-slate-100 leading-none">{completedCount} <span className="text-slate-500 font-normal">({pct(completedCount)}%)</span></td>
+                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium border-l border-slate-100 leading-none">{ongoingCount} <span className="text-slate-500 font-normal">({pct(ongoingCount)}%)</span></td>
+                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium border-l border-slate-100 leading-none">{waitingCount} <span className="text-slate-500 font-normal">({pct(waitingCount)}%)</span></td>
                                 </tr>
                               </tbody>
                             </table>
@@ -1012,12 +1001,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
           {/* 경기 설정 카드 */}
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2">
-            <div className="px-4 py-1.5 border-b border-[#e8e8ed]">
+            <div className="px-4 py-1 border-b border-[#e8e8ed]">
               <h3 className="text-base font-semibold text-slate-800 leading-tight">경기 설정</h3>
             </div>
-            <div className="px-4 py-1.5 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <label htmlFor="game-name" className="text-xs font-medium text-slate-600 shrink-0 w-20">경기 이름</label>
+            <div className="px-4 py-1 space-y-0.5">
+              <div className="flex items-center gap-0.5">
+                <label htmlFor="game-name" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 이름</label>
                 <input
                   id="game-name"
                   type="text"
@@ -1028,14 +1017,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   aria-label="경기 이름"
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-slate-600 shrink-0 w-20">경기 방식</span>
+              <div className="flex items-center gap-0.5">
+                <span className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 방식</span>
                 <span className="flex-1 text-sm font-semibold text-[#0071e3] bg-[#0071e3]/10 px-2 py-1 rounded-lg border border-[#0071e3]/20">
                   {gameMode.label}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <label htmlFor="game-date" className="text-xs font-medium text-slate-600 shrink-0 w-20">경기 언제</label>
+              <div className="flex items-center gap-0.5">
+                <label htmlFor="game-date" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 언제</label>
                 <input
                   id="game-date"
                   type="date"
@@ -1057,8 +1046,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   ))}
                 </select>
               </div>
-              <div className="flex items-center gap-2">
-                <label htmlFor="game-location" className="text-xs font-medium text-slate-600 shrink-0 w-20">경기 어디</label>
+              <div className="flex items-center gap-0.5">
+                <label htmlFor="game-location" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 어디</label>
                 <input
                   id="game-location"
                   type="text"
@@ -1069,8 +1058,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   aria-label="장소"
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <label htmlFor="game-score-limit" className="text-xs font-medium text-slate-600 shrink-0 w-20">경기 승점</label>
+              <div className="flex items-center gap-0.5">
+                <label htmlFor="game-score-limit" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 승점</label>
                 <input
                   id="game-score-limit"
                   type="number"
@@ -1100,7 +1089,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="px-2 py-1.5 border-b border-[#e8e8ed] flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
-                <p className="text-xs text-slate-500">아래에서 경기 인원을 추가·삭제할 수 있습니다</p>
+                <p className="text-xs text-slate-500 mt-0.5">아래에서 경기 인원을 추가·삭제할 수 있습니다</p>
               </div>
               <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
                 {members.length}명
@@ -1176,25 +1165,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="border-t border-[#e8e8ed] px-2 py-2">
               <p className="text-xs text-slate-500 mb-0.5">로테이션 대진</p>
               <p className="text-xs text-slate-500 mb-1">
-                현재 {members.length}명 기준 목표 <strong className="text-slate-700">{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기</strong>
+                현재 <span className="font-numeric">{members.length}</span>명 기준 목표 <strong className="text-slate-700 font-numeric">{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}</strong>경기
               </p>
               <button
                 type="button"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  if (matches.length > 0) {
+                    setShowRegenerateConfirm(true);
+                    return;
+                  }
                   doMatch();
                 }}
                 disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers}
                 className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed bg-[#0071e3] hover:bg-[#0077ed]"
               >
-                경기 생성 ({gameMode.minPlayers}~{gameMode.maxPlayers}명)
+                경기 생성
               </button>
               {members.length < gameMode.minPlayers && (
-                <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 {gameMode.minPlayers}~{gameMode.maxPlayers}명이어야 합니다.</p>
+                <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.minPlayers}</span>~<span className="font-numeric">{gameMode.maxPlayers}</span>명이어야 합니다.</p>
               )}
               {members.length > gameMode.maxPlayers && (
-                <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 {gameMode.maxPlayers}명까지입니다.</p>
+                <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.maxPlayers}</span>명까지입니다.</p>
               )}
             </div>
           </div>
@@ -1205,17 +1198,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2">
               <div className="px-2 py-1.5 border-b border-[#e8e8ed]">
                 <h3 className="text-base font-semibold text-slate-800">경기 현황</h3>
-              </div>
-              <div className="px-2 py-1 border-b border-[#e8e8ed]">
                 {(() => {
                   const perPerson =
                     members.length > 0 ? Math.round((matches.length * 4) / members.length) : 0;
                   return (
-                    <p className="text-xs text-slate-500">
-                      오늘의 매치 · 총 {matches.length}경기 · 인당 <span className="font-medium text-slate-700">{perPerson}</span>경기 (동일)
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      오늘의 매치 · 총 <span className="font-numeric">{matches.length}</span>경기 · 인당 <span className="font-medium text-slate-700 font-numeric">{perPerson}</span>경기 (동일)
                     </p>
                   );
                 })()}
+              </div>
+              <div className="px-2 py-1 border-b border-[#e8e8ed]">
                 {/* 총경기수 / 종료수 / 진행수 / 대기수 테이블 */}
                 {(() => {
                   const total = matches.length;
@@ -1224,7 +1217,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   const waitingCount = total - completedCount - ongoingCount;
                   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
                   return (
-                    <table className="w-max max-w-full text-sm border border-slate-200 rounded overflow-hidden">
+                    <table className="w-max max-w-full text-sm border border-slate-200 rounded overflow-hidden font-numeric">
                       <tbody className="bg-white text-slate-700">
                         <tr className="bg-slate-100 text-slate-600">
                           <th className="py-0.5 px-1 text-center font-medium">총경기수</th>
@@ -1244,7 +1237,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 })()}
                 {playingMatches.length > 0 && (
                   <p className="text-[10px] text-slate-400 mt-1">
-                    진행 뱃지 다시 눌러 해제 · 가능 {playableMatches.length}경기
+                    진행 뱃지 다시 눌러 해제 · 가능 <span className="font-numeric">{playableMatches.length}</span>경기
                   </p>
                 )}
               </div>
@@ -1267,23 +1260,38 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         ? "bg-green-500 text-white border border-green-600 font-semibold"
                         : "bg-slate-100 text-slate-600";
                   const canSelect = !isDone;
+                  const history = m.savedHistory && m.savedHistory.length > 0 ? m.savedHistory : (m.savedAt ? [{ at: m.savedAt, by: m.savedBy ?? "", savedByName: null }] : []);
+                  const lastSaved = history.length > 0 ? history[history.length - 1] : null;
+                  const savedByName = lastSaved?.savedByName ?? (lastSaved?.by ? members.find((p) => p.id === lastSaved.by)?.name : null);
+                  const savedAtStr = lastSaved ? formatSavedAt(lastSaved.at) : "";
+                  const statusLine = isDone && (m.score1 ?? 0) === 0 && (m.score2 ?? 0) === 0
+                    ? "승패 미반영"
+                    : isDone && (m.score1 ?? 0) === (m.score2 ?? 0)
+                      ? "승패 미반영 (동점)"
+                      : isDone
+                        ? `승패 반영 (${(m.score1 ?? 0) > (m.score2 ?? 0) ? "왼쪽 승" : "오른쪽 승"})`
+                        : null;
+                  const hasInfoLine = (savedByName != null || savedAtStr) || statusLine != null;
                   return (
                   <div
                     key={m.id}
-                    className={`flex flex-nowrap items-center gap-x-0 px-0.5 py-0.5 text-sm overflow-x-auto ${isCurrent ? "bg-amber-50/50 hover:bg-amber-50/70" : isPlayable ? "bg-green-50/90 hover:bg-green-50 ring-1 ring-green-300/60 rounded-r-lg" : "bg-white hover:bg-slate-50/80"}`}
+                    className={`flex flex-col gap-0.5 px-0.5 py-0.5 ${isCurrent ? "bg-amber-50/50" : isPlayable ? "bg-green-50/90 ring-1 ring-green-300/60 rounded-r-lg" : "bg-white hover:bg-slate-50/80"}`}
                   >
-                    <span className="shrink-0 text-sm font-semibold text-slate-600">
+                    <div className={`flex flex-nowrap items-center gap-x-1 text-sm overflow-x-auto ${isCurrent ? "hover:bg-amber-50/70" : ""}`}>
+                    <span className="shrink-0 text-sm font-semibold text-slate-600 min-w-[1.25rem]">
                       {String(index + 1).padStart(2, "0")}
                     </span>
                     <button
                       type="button"
                       onClick={() => canSelect && togglePlayingMatch(m.id)}
                       title={canSelect ? (isCurrent ? "진행 해제" : "진행으로 선택") : undefined}
-                      className={`shrink-0 w-9 py-0.5 rounded text-sm font-medium text-center leading-none ${statusColor} ${canSelect ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+                      className={`shrink-0 min-w-[1.75rem] w-7 py-0.5 rounded text-xs font-medium flex flex-col items-center justify-center leading-none ${statusColor} ${canSelect ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                     >
-                      {statusLabel}
+                      {statusLabel.split("").map((c, i) => (
+                        <span key={i}>{c}</span>
+                      ))}
                     </button>
-                    <div className="min-w-0 flex-1 flex flex-col justify-center text-left max-w-[5.5rem] gap-0">
+                    <div className="min-w-0 flex-1 flex flex-col justify-center text-left max-w-[5.5rem] gap-0 overflow-hidden">
                       {m.team1.players.map((p) => {
                         const isHighlight = p.id === highlightMemberId;
                         return (
@@ -1313,7 +1321,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             if (v !== "" && !Number.isNaN(n) && n > scoreLimit) v = String(scoreLimit);
                             updateScoreInput(m.id, "s1", v);
                           }}
-                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           aria-label="팀1 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
@@ -1330,13 +1338,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             if (v !== "" && !Number.isNaN(n) && n > scoreLimit) v = String(scoreLimit);
                             updateScoreInput(m.id, "s2", v);
                           }}
-                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           aria-label="팀2 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
                       </div>
                     </div>
-                    <div className="min-w-0 flex-1 flex flex-col justify-center text-right max-w-[5.5rem] gap-0">
+                    <div className="min-w-0 flex-1 flex flex-col justify-center text-right max-w-[5.5rem] gap-0 overflow-hidden">
                       {m.team2.players.map((p) => {
                         const isHighlight = p.id === highlightMemberId;
                         return (
@@ -1355,39 +1363,22 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <button
                       type="button"
                       onClick={() => saveResult(m.id)}
-                      className="shrink-0 py-1 px-2 rounded text-sm font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors"
+                      className="shrink-0 min-w-[1.75rem] w-7 py-1 rounded text-xs font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-col items-center justify-center"
                     >
-                      저장
+                      <span>저</span>
+                      <span>장</span>
                     </button>
-                    <div className="shrink-0 min-w-[4rem] flex flex-col items-end justify-center text-xs leading-tight pl-1 gap-0.5">
-                      <div className="text-right" title={(() => {
-                        const history = m.savedHistory && m.savedHistory.length > 0 ? m.savedHistory : (m.savedAt ? [{ at: m.savedAt, by: m.savedBy ?? "", savedByName: null }] : []);
-                        const last = history.length > 0 ? history[history.length - 1] : null;
-                        return last ? new Date(last.at).toLocaleString("ko-KR") : "";
-                      })()}>
-                        {(() => {
-                          const history = m.savedHistory && m.savedHistory.length > 0 ? m.savedHistory : (m.savedAt ? [{ at: m.savedAt, by: m.savedBy ?? "", savedByName: null }] : []);
-                          const last = history.length > 0 ? history[history.length - 1] : null;
-                          const whoName = last?.savedByName ?? (last?.by ? members.find((p) => p.id === last.by)?.name : null);
-                          return last ? (
-                            <><span className="font-medium text-slate-600 truncate max-w-[4rem] inline-block" title={whoName ?? ""}>{whoName ?? "—"}</span> <span className="text-slate-400">{formatSavedAt(last.at)}</span></>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          );
-                        })()}
-                      </div>
-                      <div className="text-right min-h-[1rem]">
-                        {isDone && (m.score1 ?? 0) === 0 && (m.score2 ?? 0) === 0 ? (
-                          <span className="text-[10px] text-amber-600 font-medium" title="0:0은 승패에 반영되지 않습니다.">승패 미반영</span>
-                        ) : isDone && (m.score1 ?? 0) === (m.score2 ?? 0) ? (
-                          <span className="text-[10px] text-amber-600 font-medium" title="동점은 승패에 반영되지 않습니다.">승패 미반영 (동점)</span>
-                        ) : isDone ? (
-                          <span className="text-[10px] font-medium text-slate-600" title="왼쪽 점수 &gt; 오른쪽 점수면 왼쪽 팀 승, 아니면 오른쪽 팀 승">
-                            승패 반영 ({(m.score1 ?? 0) > (m.score2 ?? 0) ? "왼쪽 승" : "오른쪽 승"})
-                          </span>
-                        ) : null}
-                      </div>
                     </div>
+                    {hasInfoLine && (
+                      <p className="text-[10px] text-slate-500 pl-10 leading-tight flex items-center gap-1.5 flex-wrap" title={lastSaved ? new Date(lastSaved.at).toLocaleString("ko-KR") : ""}>
+                        {(savedByName != null || savedAtStr) && (
+                          <span className="font-medium text-slate-600">{savedByName ?? "—"} {savedAtStr}</span>
+                        )}
+                        {statusLine != null && (
+                          <span className="text-amber-600 font-medium">{statusLine}</span>
+                        )}
+                      </p>
+                    )}
                   </div>
                   );
                 })}
@@ -1472,7 +1463,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
         {navView === "myinfo" && (
           <div className="pt-4 space-y-2">
-            <p className="text-xs text-slate-500">로그인 정보, 가입 클럽, 승률 통계를 확인·수정할 수 있습니다.</p>
+            <p className="text-sm text-slate-600 leading-snug mb-1.5">로그인 정보, 가입 클럽, 승률 통계를 확인·수정할 수 있습니다.</p>
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
               <div className="px-2 py-2 space-y-4">
                 <div>
@@ -1538,7 +1529,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     </p>
                   )}
                   {!getKakaoJsKey() && (
-                    <p className="text-xs text-amber-600 mb-1">.env.local에 NEXT_PUBLIC_KAKAO_JAVASCRIPT_KEY를 넣으면 카카오 로그인이 표시됩니다.</p>
+                    <p className="text-xs text-amber-600 mb-1">
+                      로컬: .env.local에 NEXT_PUBLIC_KAKAO_JAVASCRIPT_KEY 추가 후 개발 서버 재시작. 배포(Vercel): 프로젝트 설정 → Environment Variables에 동일 키 추가 후 재배포.
+                    </p>
                   )}
                   <p className="text-xs text-slate-500 mb-1.5">로그인 정보와 결합해 나를 정의합니다.</p>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1598,7 +1591,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         return pairs.length === 0 ? (
                           <p className="text-slate-500 text-xs px-2 py-3">완료된 경기가 없거나 나가 참가한 경기가 없습니다.</p>
                         ) : (
-                          <table className="w-full text-xs border-collapse">
+                          <table className="w-full text-xs border-collapse font-numeric">
                             <thead>
                               <tr className="bg-slate-100/60 text-slate-600 font-semibold">
                                 <th className="text-left py-1.5 px-2 border-b border-slate-200">상대 조합</th>
@@ -1640,7 +1633,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           onClick={() => setNavView("setting")}
           className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          <span className="text-3xl">📅</span>
+          <img src="/game-mode-icon.png?v=2" alt="" className="w-10 h-10 object-contain" />
           <span className="text-sm font-medium leading-tight">경기 방식</span>
         </button>
         <button
@@ -1648,7 +1641,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           onClick={() => { setNavView("record"); setSelectedGameId(null); }}
           className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          <span className="text-3xl">📋</span>
+          <img src="/game-list-icon.png" alt="" className="w-10 h-10 object-contain" />
           <span className="text-sm font-medium leading-tight">경기 목록</span>
         </button>
         <button
@@ -1659,10 +1652,40 @@ export function GameView({ gameId }: { gameId: string | null }) {
           {myInfo.profileImageUrl && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden title="로그인됨" />
           )}
-          <span className="text-3xl">👤</span>
+          <img src="/myinfo-icon.png" alt="" className="w-10 h-10 object-contain" />
           <span className="text-sm font-medium leading-tight">나의 정보</span>
         </button>
       </nav>
+
+      {/* 경기 생성 전 확인 모달 */}
+      {showRegenerateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" aria-modal="true" role="alertdialog" aria-labelledby="regenerate-confirm-title">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-4 space-y-3">
+            <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
+              이미 경기 현황에 경기가 있습니다. 경기를 다시 생성하면 현재까지의 경기 결과가 모두 사라집니다. 계속하시겠습니까?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowRegenerateConfirm(false)}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  doMatch();
+                  setShowRegenerateConfirm(false);
+                }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed]"
+              >
+                계속
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
