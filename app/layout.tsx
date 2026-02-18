@@ -12,6 +12,12 @@ const notoSansKr = Noto_Sans_KR({
 export const metadata: Metadata = {
   title: "경기 세팅",
   description: "개인전 기반 매칭 및 오늘의 랭킹",
+  // 홈 화면 추가 시 앱처럼 보이도록 (iOS)
+  other: {
+    "apple-mobile-web-app-capable": "yes",
+    "apple-mobile-web-app-status-bar-style": "default",
+    "apple-mobile-web-app-title": "배드민턴",
+  },
 };
 
 export const viewport = {
@@ -19,6 +25,8 @@ export const viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: "#0071e3",
+  viewportFit: "cover" as const,
 };
 
 export default function RootLayout({
