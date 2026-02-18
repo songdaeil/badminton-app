@@ -17,20 +17,20 @@
   --radius-sm: 0.75rem;
 }
 
-/* 뷰포트 폭에 비례한 유동 글자 크기: 폭이 좁아지면 글자도 작아져 줄바꿈 방지 (3.5vw ≈ 14px @ 400px) */
+/* 어르신 가독성: 기준 글자 크기를 키움 (기존 12–16px → 16–22px) */
 html {
-  font-size: clamp(12px, 3.5vw, 16px);
+  font-size: clamp(16px, 4.5vw, 22px);
 }
 
-/* 고정 px 대신 쓰는 유동 글자 크기 (vw 기반, min/max로 극단 방지) */
+/* 유동 글자 크기도 한 단계씩 키움 */
 .text-fluid-xs {
-  font-size: clamp(0.625rem, 2.5vw, 0.75rem);
+  font-size: clamp(0.75rem, 2.8vw, 0.875rem);
 }
 .text-fluid-sm {
-  font-size: clamp(0.6875rem, 2.75vw, 0.8125rem);
+  font-size: clamp(0.8125rem, 3.2vw, 0.9375rem);
 }
 .text-fluid-base {
-  font-size: clamp(0.8125rem, 3.25vw, 0.875rem);
+  font-size: clamp(0.9375rem, 3.75vw, 1.0625rem);
 }
 
 @theme inline {
