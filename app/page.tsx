@@ -476,6 +476,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }, [scoreInputs]);
   /** 경기 목록에서 공유(shareId) 카드 최신 데이터 갱신 후 리스트 다시 그리기용 */
   const [listRefreshKey, setListRefreshKey] = useState(0);
+  /** 터치 스와이프·당겨서 새로고침: 당긴 거리(px), 새로고침 중 여부 */
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef({ x: 0, y: 0 });
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
   const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
   const effectiveGameId = gameId ?? selectedGameId;
@@ -740,6 +745,76 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (!authUid || isProfileComplete) return;
     if (navView === "setting" || navView === "record") setNavView("myinfo");
   }, [authUid, isProfileComplete, navView]);
+
+  const NAV_ORDER: ("setting" | "record" | "myinfo")[] = ["setting", "record", "myinfo"];
+  const navIndex = NAV_ORDER.indexOf(navView);
+
+  /** 현재 섹션만 새로고침 (당겨서 새로고침 시 호출) */
+  const refreshCurrentSection = useCallback(() => {
+    if (navView === "setting") {
+      /* 경기 방식: 로컬 설정만 있음, 재렌더로 충분 */
+    }
+    if (navView === "record") {
+      setListRefreshKey((k) => k + 1);
+    }
+    if (navView === "myinfo" && authUid) {
+      getRemoteProfile(authUid).then((remote) => {
+        if (remote) {
+          setMyInfo(remote);
+          saveMyInfo(remote);
+        }
+      });
+    }
+  }, [navView, authUid]);
+
+  const handleMainTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, []);
+
+  const handleMainTouchMove = useCallback((e: React.TouchEvent) => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    const scrollTop = el.scrollTop;
+    const y = e.touches[0].clientY;
+    const startY = touchStartRef.current.y;
+    if (scrollTop <= 0 && y > startY) {
+      setPullDistance(Math.min(y - startY, 80));
+    }
+  }, []);
+
+  /** 터치 당길 때 기본 동작 차단(스크롤 영역 내 당겨서 새로고침만) - passive: false 필요 */
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    const onMove = (e: TouchEvent) => {
+      const target = el;
+      if (target.scrollTop <= 0 && e.touches[0].clientY > touchStartRef.current.y) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("touchmove", onMove, { passive: false });
+    return () => el.removeEventListener("touchmove", onMove);
+  }, []);
+
+  const handleMainTouchEnd = useCallback((e: React.TouchEvent) => {
+    const el = mainScrollRef.current;
+    if (pullDistance >= 60 && !isRefreshing) {
+      setIsRefreshing(true);
+      setPullDistance(0);
+      refreshCurrentSection();
+      setTimeout(() => setIsRefreshing(false), 600);
+    } else {
+      setPullDistance(0);
+    }
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+    const dx = endX - touchStartRef.current.x;
+    const dy = endY - touchStartRef.current.y;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+      if (dx < 0 && navIndex < 2) setNavView(NAV_ORDER[navIndex + 1]);
+      if (dx > 0 && navIndex > 0) setNavView(NAV_ORDER[navIndex - 1]);
+    }
+  }, [pullDistance, isRefreshing, refreshCurrentSection, navIndex]);
 
   /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
   const uploadProfileToFirestore = useCallback(async () => {
@@ -1563,8 +1638,26 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </>
       )}
 
-      <main className="flex-1 px-2 pb-24 overflow-auto">
-        {navView === "setting" && (
+      <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden">
+        <div
+          ref={mainScrollRef}
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y"
+          style={{ WebkitOverflowScrolling: "touch" }}
+          onTouchStart={handleMainTouchStart}
+          onTouchMove={handleMainTouchMove}
+          onTouchEnd={handleMainTouchEnd}
+        >
+          {/* 당겨서 새로고침: 현재 섹션만 새로고침, 화면 전환 없음 */}
+          {(pullDistance > 0 || isRefreshing) && (
+            <div className="flex justify-center items-center py-2 text-slate-500 text-sm" style={{ minHeight: pullDistance > 0 ? Math.min(pullDistance, 56) : 48 }}>
+              {isRefreshing ? (
+                <span className="animate-pulse">새로고침 중...</span>
+              ) : (
+                <span>↓ 당기면 새로고침</span>
+              )}
+            </div>
+          )}
+          {navView === "setting" && (
         <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
@@ -2823,6 +2916,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             )}
           </div>
         )}
+        </div>
       </main>
 
       {/* 하단 네비 - 블러·미니멀 (프로필 업로드 전에는 경기 방식·경기 목록 비활성) */}
