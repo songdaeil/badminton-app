@@ -10,6 +10,8 @@ export interface Member {
   wins: number;
   losses: number;
   pointDiff: number; // 총 점수 득실 (득점 - 실점)
+  /** Firebase UID. 프로필로 나 추가로 연동된 경우에만 설정됨 */
+  linkedUid?: string;
 }
 
 /** 한 팀 = 2명 */

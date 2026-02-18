@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
@@ -28,6 +28,7 @@ import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
+import { ProfileBadge } from "./components/profile-badge";
 
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
 function encodeGameForShare(data: GameData): string {
@@ -71,7 +72,7 @@ function decodeGameFromShare(encoded: string): GameData | null {
   }
 }
 
-/** 저장된 경기(score1/score2 있는 것)만으로 멤버별 승/패/득실차 재계산 → 경기 결과와 항상 일치 */
+/** 저장된 경기(score1/score2 있는 것)만으로 멤버별 승/패/득실차 재계산 → 경기 명단 state 갱신용 */
 function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): Member[] {
   const stats: Record<string, { wins: number; losses: number; pointDiff: number }> = {};
   for (const m of members) stats[m.id] = { wins: 0, losses: 0, pointDiff: 0 };
@@ -104,6 +105,60 @@ function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): M
     losses: stats[m.id]?.losses ?? 0,
     pointDiff: stats[m.id]?.pointDiff ?? 0,
   }));
+}
+
+/** 경기 결과 전용: 경기 현황(matches)만으로 참가 멤버와 승/패/득실차 산출. 명단 삭제와 무관하게 현황 기준만 따름 */
+function buildRankingFromMatchesOnly(matches: Match[], gradeOrder: Record<string, number>): Member[] {
+  const byId = new Map<string, Member>();
+  const stats: Record<string, { wins: number; losses: number; pointDiff: number }> = {};
+  for (const match of matches) {
+    for (const p of match.team1.players) {
+      if (!byId.has(p.id)) {
+        byId.set(p.id, { ...p, wins: 0, losses: 0, pointDiff: 0 });
+        stats[p.id] = { wins: 0, losses: 0, pointDiff: 0 };
+      }
+    }
+    for (const p of match.team2.players) {
+      if (!byId.has(p.id)) {
+        byId.set(p.id, { ...p, wins: 0, losses: 0, pointDiff: 0 });
+        stats[p.id] = { wins: 0, losses: 0, pointDiff: 0 };
+      }
+    }
+  }
+  for (const match of matches) {
+    if (match.score1 == null || match.score2 == null) continue;
+    const s1 = match.score1;
+    const s2 = match.score2;
+    if (s1 === 0 && s2 === 0) continue;
+    if (s1 === s2) continue;
+    const diff = Math.abs(s1 - s2);
+    const team1Won = s1 > s2;
+    for (const p of match.team1.players) {
+      if (stats[p.id]) {
+        stats[p.id].wins += team1Won ? 1 : 0;
+        stats[p.id].losses += team1Won ? 0 : 1;
+        stats[p.id].pointDiff += team1Won ? diff : -diff;
+      }
+    }
+    for (const p of match.team2.players) {
+      if (stats[p.id]) {
+        stats[p.id].wins += team1Won ? 0 : 1;
+        stats[p.id].losses += team1Won ? 1 : 0;
+        stats[p.id].pointDiff += team1Won ? -diff : diff;
+      }
+    }
+  }
+  const list = Array.from(byId.values()).map((m) => ({
+    ...m,
+    wins: stats[m.id]?.wins ?? 0,
+    losses: stats[m.id]?.losses ?? 0,
+    pointDiff: stats[m.id]?.pointDiff ?? 0,
+  }));
+  return list.sort((a, b) => {
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
+    return (gradeOrder[a.grade] ?? 0) - (gradeOrder[b.grade] ?? 0);
+  });
 }
 
 /** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
@@ -479,9 +534,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 터치 스와이프·당겨서 새로고침: 당긴 거리(px), 새로고침 중 여부 */
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const mainScrollRef = useRef<HTMLDivElement>(null);
+  /** 캐러셀: 가로 드래그 시 옆 섹션 비치는 오프셋(px) */
+  const [carouselDragOffset, setCarouselDragOffset] = useState(0);
+  /** 캐러셀 뷰포트 너비(px) - 패널·트랜스폼 정확 정렬용 */
+  const [carouselViewportWidth, setCarouselViewportWidth] = useState(0);
+  const carouselViewportRef = useRef<HTMLDivElement>(null);
+  const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
   const touchStartRef = useRef({ x: 0, y: 0 });
-  /** 오버레이(경기 상세·프로필 수정) 스와이프 백 제스처용 */
+  /** 가로 스와이프 vs 세로 스크롤/당겨서새로고침 결정 후 유지 */
+  const gestureLockRef = useRef<"h" | "v" | "pull" | null>(null);
+  /** 경기 목록 상세·프로필 수정 등 섹션 하위 오버레이 열림 시 true → 캐러셀 스와이프 무시 */
+  const overlayOpenRef = useRef(false);
+  /** 오버레이(도움말·확인 모달) 스와이프 제스처용 */
   const overlayTouchStartRef = useRef({ x: 0, y: 0 });
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
   const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
@@ -513,7 +577,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setGameName(typeof data.gameName === "string" && data.gameName.trim() ? data.gameName.trim() : "");
     setMatches(data.matches);
     setMyProfileMemberId(
-      data.myProfileMemberId ?? data.members.find((m) => m.name === "송대일")?.id ?? null
+      data.myProfileMemberId ?? data.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
     );
     const loadedModeId = data.gameMode && GAME_MODES.some((m) => m.id === data.gameMode) ? data.gameMode! : GAME_MODES[0].id;
     setGameModeId(loadedModeId);
@@ -553,7 +617,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setGameName(typeof remote.gameName === "string" && remote.gameName.trim() ? remote.gameName.trim() : "");
       setMatches(remote.matches);
       setMyProfileMemberId(
-        remote.myProfileMemberId ?? remote.members.find((m) => m.name === "송대일")?.id ?? null
+        remote.myProfileMemberId ?? remote.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
       );
       const loadedModeId = remote.gameMode && GAME_MODES.some((m) => m.id === remote.gameMode) ? remote.gameMode! : GAME_MODES[0].id;
       setGameModeId(loadedModeId);
@@ -599,9 +663,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setNavView("record");
       setSelectedGameId(null);
       router.replace("/?view=record");
+      sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+      setLoginGatePassed(true);
       return;
     }
     // Firestore 동기화: 먼저 getSharedGame 시도(내부에서 ensureFirebase 호출). 없으면 구형 base64 링크 시도
+    const passGateFromShare = () => {
+      sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+      setLoginGatePassed(true);
+    };
     getSharedGame(share).then((data) => {
       if (data) {
         const newId = createGameId();
@@ -614,6 +684,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setNavView("record");
         setSelectedGameId(null);
         router.replace("/?view=record");
+        passGateFromShare();
         return;
       }
       const fallback = decodeGameFromShare(share);
@@ -636,6 +707,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setNavView("record");
       setSelectedGameId(null);
       router.replace("/?view=record");
+      passGateFromShare();
     }).catch(() => {
       const data = decodeGameFromShare(share);
       if (!data) return;
@@ -656,6 +728,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setNavView("record");
       setSelectedGameId(null);
       router.replace("/?view=record");
+      passGateFromShare();
     });
   }, [searchParams, router, gameId]);
 
@@ -769,54 +842,94 @@ export function GameView({ gameId }: { gameId: string | null }) {
     }
   }, [navView, authUid]);
 
-  const handleMainTouchStart = useCallback((e: React.TouchEvent) => {
+  const handleCarouselTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    gestureLockRef.current = null;
   }, []);
 
-  const handleMainTouchMove = useCallback((e: React.TouchEvent) => {
-    const el = mainScrollRef.current;
-    if (!el) return;
-    const scrollTop = el.scrollTop;
-    const y = e.touches[0].clientY;
-    const startY = touchStartRef.current.y;
-    if (scrollTop <= 0 && y > startY) {
-      setPullDistance(Math.min(y - startY, 80));
+  const handleCarouselTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (overlayOpenRef.current) {
+      gestureLockRef.current = null;
+      return;
     }
+    const lock = gestureLockRef.current;
+    if (lock === "pull") {
+      if (pullDistance >= 60 && !isRefreshing) {
+        setIsRefreshing(true);
+        setPullDistance(0);
+        refreshCurrentSection();
+        setTimeout(() => setIsRefreshing(false), 600);
+      } else {
+        setPullDistance(0);
+      }
+    }
+    if (lock === "h") {
+      const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
+      if (dx > 80 && navIndex > 0) setNavView(NAV_ORDER[navIndex - 1]);
+      else if (dx < -80 && navIndex < 2) setNavView(NAV_ORDER[navIndex + 1]);
+      setCarouselDragOffset(0);
+    }
+    gestureLockRef.current = null;
+  }, [pullDistance, isRefreshing, refreshCurrentSection, navIndex]);
+
+  /** 캐러셀 뷰포트 너비 측정 (패널 정확 정렬용) */
+  useEffect(() => {
+    const viewport = carouselViewportRef.current;
+    if (!viewport) return;
+    const update = () => setCarouselViewportWidth(viewport.offsetWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(viewport);
+    return () => ro.disconnect();
   }, []);
 
-  /** 터치 당길 때 기본 동작 차단(스크롤 영역 내 당겨서 새로고침만) - passive: false 필요 */
+  /** 경기 목록 상세·프로필 수정 열림 시 캐러셀 스와이프 무시용 ref 동기화 */
   useEffect(() => {
-    const el = mainScrollRef.current;
-    if (!el) return;
+    overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
+  }, [selectedGameId, profileEditOpen, profileEditClosing]);
+
+  /** 캐러셀 터치: 가로 드래그 시 옆 섹션 비치게, 세로는 패널 스크롤/당겨서새로고침 (passive: false) */
+  useEffect(() => {
+    const viewport = carouselViewportRef.current;
+    if (!viewport) return;
     const onMove = (e: TouchEvent) => {
-      const target = el;
-      if (target.scrollTop <= 0 && e.touches[0].clientY > touchStartRef.current.y) {
+      if (overlayOpenRef.current) return;
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      const dx = x - touchStartRef.current.x;
+      const dy = y - touchStartRef.current.y;
+      let lock = gestureLockRef.current;
+      if (lock === null) {
+        const activePanel = panelScrollRefs.current[navIndex];
+        const atTop = (activePanel?.scrollTop ?? 0) <= 0;
+        if (Math.abs(dx) > Math.abs(dy)) {
+          gestureLockRef.current = "h";
+          lock = "h";
+        } else if (dy > 0 && atTop) {
+          gestureLockRef.current = "pull";
+          lock = "pull";
+        } else {
+          gestureLockRef.current = "v";
+          return;
+        }
+      }
+      if (lock === "h") {
         e.preventDefault();
+        const w = viewport.offsetWidth;
+        let next = dx;
+        if (navIndex <= 0) next = Math.min(0, dx);
+        if (navIndex >= 2) next = Math.max(0, dx);
+        next = Math.max(-w * 0.4, Math.min(w * 0.4, next));
+        setCarouselDragOffset(next);
+      }
+      if (lock === "pull") {
+        e.preventDefault();
+        setPullDistance((p) => Math.min(dy, 80));
       }
     };
-    el.addEventListener("touchmove", onMove, { passive: false });
-    return () => el.removeEventListener("touchmove", onMove);
-  }, []);
-
-  const handleMainTouchEnd = useCallback((e: React.TouchEvent) => {
-    const el = mainScrollRef.current;
-    if (pullDistance >= 60 && !isRefreshing) {
-      setIsRefreshing(true);
-      setPullDistance(0);
-      refreshCurrentSection();
-      setTimeout(() => setIsRefreshing(false), 600);
-    } else {
-      setPullDistance(0);
-    }
-    const endX = e.changedTouches[0].clientX;
-    const endY = e.changedTouches[0].clientY;
-    const dx = endX - touchStartRef.current.x;
-    const dy = endY - touchStartRef.current.y;
-    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
-      if (dx < 0 && navIndex < 2) setNavView(NAV_ORDER[navIndex + 1]);
-      if (dx > 0 && navIndex > 0) setNavView(NAV_ORDER[navIndex - 1]);
-    }
-  }, [pullDistance, isRefreshing, refreshCurrentSection, navIndex]);
+    viewport.addEventListener("touchmove", onMove, { passive: false });
+    return () => viewport.removeEventListener("touchmove", onMove);
+  }, [navIndex]);
 
   /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
   const uploadProfileToFirestore = useCallback(async () => {
@@ -1143,15 +1256,32 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
   }, [gameModeId]);
 
+  /** 프로필로 나 추가 시 사용: Firebase 연동(linkedUid)으로 멤버 추가 후 '나'로 설정 */
+  const addMemberAsMe = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const uid = getCurrentUserUid();
+    const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
+    const newId = createId();
+    setMembers((prev) => {
+      if (prev.length >= max) return prev;
+      return [
+        ...prev,
+        { id: newId, name: trimmed, gender, grade, wins: 0, losses: 0, pointDiff: 0, linkedUid: uid ?? undefined },
+      ];
+    });
+    setMyProfileMemberId(newId);
+  }, [gameModeId]);
+
   const removeMember = useCallback((id: string) => {
     setMembers((prev) => prev.filter((m) => m.id !== id));
   }, []);
 
-  const ranking = [...members].sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
-    return GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade];
-  });
+  /** 경기 결과 = 경기 현황(matches)만으로 산출. 명단에서 인원 삭제해도 결과는 현황 기준으로 유지 */
+  const ranking = useMemo(
+    () => buildRankingFromMatchesOnly(matches, GRADE_ORDER),
+    [matches]
+  );
 
   /** 매치에서 4명의 선수 id 추출 (공통 로직) */
   const getMatchPlayerIds = (match: Match): string[] => {
@@ -1658,16 +1788,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
       <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden">
         <div
-          ref={mainScrollRef}
-          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y"
-          style={{ WebkitOverflowScrolling: "touch" }}
-          onTouchStart={handleMainTouchStart}
-          onTouchMove={handleMainTouchMove}
-          onTouchEnd={handleMainTouchEnd}
+          ref={carouselViewportRef}
+          className="flex-1 min-h-0 overflow-hidden touch-pan-y"
+          onTouchStart={handleCarouselTouchStart}
+          onTouchEnd={handleCarouselTouchEnd}
         >
-          {/* 당겨서 새로고침: 현재 섹션만 새로고침, 화면 전환 없음 */}
+          {/* 당겨서 새로고침: 현재 섹션만 새로고침 */}
           {(pullDistance > 0 || isRefreshing) && (
-            <div className="flex justify-center items-center py-2 text-slate-500 text-sm" style={{ minHeight: pullDistance > 0 ? Math.min(pullDistance, 56) : 48 }}>
+            <div className="flex justify-center items-center py-2 text-slate-500 text-sm shrink-0" style={{ minHeight: pullDistance > 0 ? Math.min(pullDistance, 56) : 48 }}>
               {isRefreshing ? (
                 <span className="animate-pulse">새로고침 중...</span>
               ) : (
@@ -1675,7 +1803,26 @@ export function GameView({ gameId }: { gameId: string | null }) {
               )}
             </div>
           )}
-          {navView === "setting" && (
+          <div
+            className="flex min-h-0 flex-1"
+            style={{
+              width: carouselViewportWidth > 0 ? carouselViewportWidth * 3 : "300%",
+              transform: carouselViewportWidth > 0
+                ? `translateX(${-navIndex * carouselViewportWidth + carouselDragOffset}px)`
+                : `translateX(calc(-${navIndex} * 33.333% + ${carouselDragOffset}px))`,
+              transition: carouselDragOffset === 0 ? "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)" : "none",
+            }}
+          >
+            {/* 패널 0: 경기 방식 */}
+            <div
+              ref={(el) => { panelScrollRefs.current[0] = el; }}
+              className="shrink-0 min-h-full overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
+              style={{
+                flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
+                width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
+                WebkitOverflowScrolling: "touch",
+              }}
+            >
         <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
@@ -1841,9 +1988,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
         </section>
         </div>
-        )}
-
-        {navView === "record" && (
+            </div>
+            {/* 패널 1: 경기 목록 */}
+            <div
+              ref={(el) => { panelScrollRefs.current[1] = el; }}
+              className="shrink-0 min-h-full overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
+              style={{
+                flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
+                width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
+                WebkitOverflowScrolling: "touch",
+              }}
+            >
         <div key="record-wrap" className="relative pt-4 min-h-[70vh]">
         {!selectedGameId && (
         /* 경기 목록: Firestore 동기화된 카드는 listRefreshKey 갱신 시 최신 데이터 표시 */
@@ -1917,7 +2072,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     {isNewest && (
                       <span className="absolute left-0 top-0 z-10" style={{ width: 18, height: 18 }}>
                         <span className="absolute left-0 top-0 block" style={{ width: 0, height: 0, borderStyle: "solid", borderWidth: "18px 18px 0 0", borderColor: "#f59e0b transparent transparent transparent" }} />
-                        <span className="absolute left-[4px] top-[3px] text-[9px] font-bold text-white leading-none drop-shadow-[0_0_1px_rgba(0,0,0,0.5)]">
+                        <span className="absolute left-[2px] top-0 text-[9px] font-bold text-white leading-none drop-shadow-[0_0_1px_rgba(0,0,0,0.5)]">
                           N
                         </span>
                       </span>
@@ -1933,15 +2088,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       <div className="mt-0 space-y-px w-full block">
                         <p className="text-fluid-sm text-slate-500 leading-tight">경기 방식: {modeLabel}</p>
                           <p className="text-fluid-sm text-slate-500 leading-tight font-numeric">
-                            경기 인원: 현재 {data.members.length}명 기준
+                            경기 인원:{" "}
                             {mode && data.members.length >= mode.minPlayers && data.members.length <= mode.maxPlayers ? (
                               (() => {
                                 const targetTotal = getTargetTotalGames(data.members.length);
                                 const perPerson = targetTotal > 0 ? Math.round((targetTotal * 4) / data.members.length) : "-";
-                                return <> 총 {targetTotal}경기 · 인당 {perPerson}경기</>;
+                                return <>총{data.members.length}명-총{targetTotal}경기-인당{perPerson}경기</>;
                               })()
                             ) : (
-                              <> 총 -경기 · 인당 -경기</>
+                              <>총{data.members.length}명-총-경기-인당-경기</>
                             )}
                           </p>
                           {(() => {
@@ -2071,16 +2226,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               ? "slideOutToLeftOverlay 0.25s cubic-bezier(0.32, 0.72, 0, 1) forwards"
               : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
           }}
-          onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
-          onTouchEnd={(e) => {
-            if (recordDetailClosing) return;
-            const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
-            const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
-            if (dx > 60 && Math.abs(dx) > Math.abs(dy)) {
-              setRecordDetailClosing(true);
-              setTimeout(() => { setSelectedGameId(null); setRecordDetailClosing(false); }, 250);
-            }
-          }}
+          onTouchStart={(e) => e.stopPropagation()}
         >
         <div className="space-y-4 pb-8">
         {/* 선택한 경기: 경기 요약·명단·대진·현황·랭킹 */}
@@ -2133,11 +2279,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div className="flex items-center gap-0.5 py-0.5">
                 <span className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 인원</span>
                 <span className="flex-1 text-sm font-medium text-slate-500 font-numeric bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 cursor-default select-none inline-block" title="경기 명단 인원 기준 (변경 불가)">
-                  현재 {members.length}명 기준
                   {members.length >= gameMode.minPlayers && members.length <= gameMode.maxPlayers ? (
-                    <> 총 {getTargetTotalGames(members.length)}경기 · 인당 {getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</>
+                    <>총{members.length}명-총{getTargetTotalGames(members.length)}경기-인당{getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</>
                   ) : (
-                    <> 총 -경기 · 인당 -경기</>
+                    <>총{members.length}명-총-경기-인당-경기</>
                   )}
                 </span>
               </div>
@@ -2231,7 +2376,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         {String(i + 1).padStart(2, "0")}
                       </td>
                       <td className="border-l border-slate-300 px-1 py-0.5 text-sm font-semibold text-slate-800 whitespace-nowrap min-w-0">
-                        {m.name}
+                        <span className="inline-flex items-center gap-1">
+                          {m.name}
+                          {m.linkedUid ? <span className="text-[10px] text-slate-600 bg-slate-100 px-1 rounded shrink-0" title="Firebase 사용자 연동">연동</span> : null}
+                        </span>
                       </td>
                       <td className="border-l border-slate-300 px-1 py-0.5 text-xs text-slate-500">
                         {m.gender === "M" ? "남" : m.gender === "F" ? "여" : "-"}
@@ -2314,8 +2462,37 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </div>
             <div className="border-t border-[#e8e8ed] px-2 py-2">
               <p className="text-xs text-slate-500 mb-1">
-                현재 <span className="font-numeric">{members.length}</span>명 기준 총 <strong className="text-slate-700 font-numeric">{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}</strong>경기 인당 <strong className="text-slate-700 font-numeric">{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}</strong>경기
+                <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
               </p>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const name = myInfo.name?.trim();
+                  if (!name) {
+                    alert("경기 이사에서 프로필 이름을 먼저 입력해 주세요.");
+                    return;
+                  }
+                  const uid = getCurrentUserUid();
+                  if (uid && members.some((m) => m.linkedUid === uid)) {
+                    alert("이미 명단에 있습니다.");
+                    return;
+                  }
+                  if (!uid && members.some((m) => m.name === name)) {
+                    alert("이미 명단에 있습니다.");
+                    return;
+                  }
+                  if (members.length >= gameMode.maxPlayers) {
+                    alert(`경기 인원은 최대 ${gameMode.maxPlayers}명까지입니다.`);
+                    return;
+                  }
+                  addMemberAsMe(name, myInfo.gender ?? "M", myInfo.grade ?? "D");
+                }}
+                className="w-full py-2 rounded-xl text-sm font-medium text-[#0071e3] bg-[#0071e3]/10 hover:bg-[#0071e3]/20 transition-colors btn-tap mb-2"
+              >
+                프로필로 나 추가
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
@@ -2363,7 +2540,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     memberCount > 0 ? Math.round((matches.length * 4) / memberCount) : 0;
                   return (
                     <p className="text-xs text-slate-500 mt-0.5">
-                      현재 <span className="font-numeric">{memberCount}</span>명 기준 · 총 <span className="font-numeric">{matches.length}</span>경기 · 인당 <span className="font-medium text-slate-700 font-numeric">{perPerson}</span>경기 (동일)
+                      <span className="font-numeric">총{memberCount}명-총{matches.length}경기-인당{perPerson}경기</span>
                     </p>
                   );
                 })()}
@@ -2466,7 +2643,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             className={`block w-full text-left text-sm leading-none truncate rounded px-0.5 -mx-0.5 ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500" : "font-medium text-slate-700 hover:bg-slate-100"} ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
                             title={isHighlight ? "클릭 시 하이라이트 해제" : `${p.name} 클릭 시 이 선수 경기만 하이라이트 (같은 줄 왼쪽=파트너, 오른쪽=상대)`}
                           >
-                            {p.name} <span className={isHighlight ? "text-amber-900/80 font-semibold" : "text-slate-500 font-normal"}>({p.gender === "M" ? "남" : "여"} {p.grade})</span>
+                            <span className="inline-flex items-center gap-1 truncate">
+                              <span>{p.name} <span className={isHighlight ? "text-amber-900/80 font-semibold" : "text-slate-500 font-normal"}>({p.gender === "M" ? "남" : "여"} {p.grade})</span></span>
+                            </span>
                           </button>
                         );
                       })}
@@ -2519,7 +2698,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             className={`block w-full text-right text-sm leading-none truncate rounded px-0.5 -mx-0.5 ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500" : "font-medium text-slate-700 hover:bg-slate-100"} ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
                             title={isHighlight ? "클릭 시 하이라이트 해제" : `${p.name} 클릭 시 이 선수 경기만 하이라이트 (같은 줄 왼쪽=파트너, 오른쪽=상대)`}
                           >
-                            {p.name} <span className={isHighlight ? "text-amber-900/80 font-semibold" : "text-slate-500 font-normal"}>({p.gender === "M" ? "남" : "여"} {p.grade})</span>
+                            <span className="inline-flex items-center gap-1 truncate">
+                              <span>{p.name} <span className={isHighlight ? "text-amber-900/80 font-semibold" : "text-slate-500 font-normal"}>({p.gender === "M" ? "남" : "여"} {p.grade})</span></span>
+                            </span>
                           </button>
                         );
                       })}
@@ -2555,8 +2736,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
             <div className="px-2 py-1.5 border-b border-[#e8e8ed]">
               <h3 className="text-base font-semibold text-slate-800">경기 결과</h3>
-              <p className="text-xs text-slate-500 mt-0.5">승수가 높을수록 위로, 같으면 득실차가 좋은 순, 그다음 급수 순으로 정렬됩니다.</p>
+              <p className="text-xs text-slate-500 mt-0.5">경기 현황에서 진행한 경기 점수로 산출됩니다. 승수·득실차·급수 순으로 정렬됩니다.</p>
             </div>
+            {matches.length === 0 ? (
+              <p className="px-2 py-4 text-sm text-slate-500 text-center">경기 명단으로 경기 생성 후, 경기 현황에서 점수를 입력하면 여기에 결과가 표시됩니다.</p>
+            ) : (
             <ul className="divide-y divide-slate-100">
               {ranking.map((m, i) => {
                 const rank = i + 1;
@@ -2628,6 +2812,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 );
               })}
             </ul>
+            )}
           </div>
         </section>
 
@@ -2635,9 +2820,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
         </div>
-        )}
-
-        {navView === "myinfo" && (
+            </div>
+            {/* 패널 2: 경기 이사 */}
+            <div
+              ref={(el) => { panelScrollRefs.current[2] = el; }}
+              className="shrink-0 min-h-full overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
+              style={{
+                flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
+                width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
+                WebkitOverflowScrolling: "touch",
+              }}
+            >
           <div key="myinfo" className="pt-4 space-y-2 animate-fade-in-up">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
             {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
@@ -2686,21 +2879,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </div>
                 <div className="px-2.5 py-2 space-y-2">
                   <div className="flex items-center gap-2 p-1.5 rounded-xl bg-slate-50 border border-slate-100">
-                    <div className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden bg-slate-200 ring-2 ring-white shadow">
-                      {myInfo.profileImageUrl ? (
-                        <img
-                          src={myInfo.profileImageUrl}
-                          alt="프로필"
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                        />
-                      ) : (
-                        <span className="w-full h-full flex items-center justify-center text-slate-500 text-xl font-medium">
-                          {myInfo.name?.charAt(0)?.toUpperCase() || "?"}
-                        </span>
-                      )}
-                    </div>
+                    <ProfileBadge
+                      profileImageUrl={myInfo.profileImageUrl}
+                      name={myInfo.name ?? ""}
+                      gender={myInfo.gender ?? "M"}
+                      grade={myInfo.grade ?? "D"}
+                      size="md"
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-800 truncate">
                         {myInfo.name || "이름 없음"}
@@ -2724,59 +2909,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
               <div className="px-2 py-2 space-y-4">
                 <div>
-                  <h3 className="text-sm font-semibold text-slate-700 mb-1.5">승률 통계</h3>
-                  <p className="text-xs text-slate-500 mb-1.5">나를 기준으로 상대 조합(AA·AB·BB 등)별 승률만 테이블로 표시합니다.</p>
-                  {!myProfileMemberId ? (
-                    <p className="text-slate-500 text-xs py-2">나가 지정되지 않았습니다.</p>
-                  ) : (
-                    <>
-                      {(() => {
-                        const completed = matches.filter((m) => m.score1 != null && m.score2 != null);
-                        type PairStats = { wins: number; losses: number };
-                        const byPair: Record<string, PairStats> = {};
-                        for (const m of completed) {
-                          const in1 = m.team1.players.some((p) => p.id === myProfileMemberId);
-                          const in2 = m.team2.players.some((p) => p.id === myProfileMemberId);
-                          if (!in1 && !in2) continue;
-                          const opponentTeam = in1 ? m.team2 : m.team1;
-                          const pairKey = [opponentTeam.players[0].grade, opponentTeam.players[1].grade].sort().join("");
-                          if (!byPair[pairKey]) byPair[pairKey] = { wins: 0, losses: 0 };
-                          const myWon = in1 ? (m.score1! > m.score2!) : (m.score2! > m.score1!);
-                          if (myWon) byPair[pairKey].wins += 1;
-                          else byPair[pairKey].losses += 1;
-                        }
-                        const pairs = Object.entries(byPair).sort(([a], [b]) => a.localeCompare(b));
-                        return pairs.length === 0 ? (
-                          <p className="text-slate-500 text-xs px-2 py-3">완료된 경기가 없거나 나가 참가한 경기가 없습니다.</p>
-                        ) : (
-                          <table className="w-full text-xs border-collapse font-numeric">
-                            <thead>
-                              <tr className="bg-slate-100/60 text-slate-600 font-semibold">
-                                <th className="text-left py-1.5 px-2 border-b border-slate-200">상대 조합</th>
-                                <th className="text-right py-1.5 px-2 border-b border-slate-200">승</th>
-                                <th className="text-right py-1.5 px-2 border-b border-slate-200">패</th>
-                                <th className="text-right py-1.5 px-2 border-b border-slate-200">승률</th>
-                              </tr>
-                            </thead>
-                            <tbody className="text-slate-700">
-                              {pairs.map(([pair, st]) => {
-                                const total = st.wins + st.losses;
-                                const pct = total > 0 ? Math.round((st.wins / total) * 100) : 0;
-                                return (
-                                  <tr key={pair} className="border-b border-slate-100 last:border-b-0">
-                                    <td className="py-1.5 px-2 font-medium">{pair}조</td>
-                                    <td className="py-1.5 px-2 text-right font-semibold text-slate-700">{st.wins}</td>
-                                    <td className="py-1.5 px-2 text-right font-semibold text-slate-700">{st.losses}</td>
-                                    <td className="py-1.5 px-2 text-right font-medium">{pct}%</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        );
-                      })()}
-                    </>
-                  )}
+                  <h3 className="text-sm font-semibold text-slate-700 mb-1.5">나의 전적</h3>
+                  <hr className="border-t border-slate-200 my-2" aria-hidden />
+                  <p className="text-slate-500 text-xs py-2">시스템을 준비중입니다.</p>
                 </div>
               </div>
             </div>
@@ -2791,16 +2926,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
           }}
           aria-modal="true"
-          onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
-          onTouchEnd={(e) => {
-            if (profileEditClosing) return;
-            const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
-            const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
-            if (dx > 60 && Math.abs(dx) > Math.abs(dy)) {
-              setProfileEditClosing(true);
-              setTimeout(() => { setProfileEditOpen(false); setProfileEditClosing(false); }, 250);
-            }
-          }}
+          onTouchStart={(e) => e.stopPropagation()}
         >
           <header className="flex items-center gap-2 shrink-0 px-3 py-2.5 border-b border-[#e8e8ed] bg-white">
             <button
@@ -2953,7 +3079,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
             )}
           </div>
-        )}
+            </div>
+          </div>
         </div>
       </main>
 
@@ -2995,11 +3122,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <button
           type="button"
           onClick={() => setNavView("myinfo")}
-          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${(getCurrentPhoneUser() || getCurrentEmailUser()) ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
+          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden title="로그인됨" />
-          )}
           <NavIconMyInfo className="w-10 h-10 shrink-0" filled={isProfileComplete} />
           <span className="text-sm font-medium leading-tight">경기 이사</span>
         </button>
