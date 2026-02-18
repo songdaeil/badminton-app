@@ -10,7 +10,7 @@
 |------|--------|------|
 | 1 | Firebase 프로젝트 생성 | 콘솔 홈 |
 | 2 | Firestore 데이터베이스 생성 | 빌드 → Firestore Database |
-| 3 | Firestore 규칙에 `sharedGames` 읽기/쓰기 허용 | Firestore → 규칙 탭 |
+| 3 | Firestore 규칙에 `sharedGames`, `users` 설정 | Firestore → 규칙 탭 |
 | 4 | 웹 앱 등록 후 설정 6개 값 복사 | 프로젝트 설정 → 일반 → 내 앱 |
 | 5 | **전화번호 로그인** 사용 설정 | Authentication → Sign-in method → 전화 |
 | 6 | **승인된 도메인**에 사이트 주소 추가 | Authentication → 설정 → 승인된 도메인 |
@@ -50,11 +50,16 @@ service cloud.firestore {
     match /sharedGames/{shareId} {
       allow read, write: if true;
     }
+    // 로그인 사용자 프로필: 본인 UID 문서만 읽기/쓰기 (다른 기기 동기화)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }
 ```
 
-> 링크를 아는 사람만 해당 경기 문서에 접근할 수 있습니다. shareId는 예측하기 어려운 랜덤 문자열입니다.
+- **sharedGames**: 링크를 아는 사람만 해당 경기 문서에 접근합니다. shareId는 예측하기 어려운 랜덤 문자열입니다.
+- **users**: 로그인한 사용자만 자신의 문서(`/users/{본인 uid}`)를 읽고 쓸 수 있습니다. 같은 이메일/전화번호로 다른 기기에서 로그인하면 동일한 프로필이 표시됩니다.
 
 ---
 

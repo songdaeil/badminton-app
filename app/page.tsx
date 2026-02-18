@@ -4,7 +4,8 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
-import { ensureFirebase, getDb } from "@/lib/firebase";
+import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
+import { getCurrentUserUid, getRemoteProfile, setRemoteProfile } from "@/lib/profile-sync";
 import { addSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
 import {
   getCurrentEmailUser,
@@ -23,7 +24,7 @@ import {
   startPhoneAuth,
   signOutPhone,
 } from "@/lib/phone-auth";
-import type { ConfirmationResult } from "firebase/auth";
+import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
@@ -412,6 +413,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
   /** 앱 최초 실행 시 전체화면 로그인 화면 통과 여부 (세션 기준, 건너뛰기/로그인 후 메인 표시) */
   const [loginGatePassed, setLoginGatePassed] = useState(false);
+  /** 로그인한 사용자 UID (프로필 Firestore 동기화용) */
+  const [authUid, setAuthUid] = useState<string | null>(null);
   /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
   const [phoneStep, setPhoneStep] = useState<"idle" | "sending" | "code" | "error">("idle");
   const [phoneNumberInput, setPhoneNumberInput] = useState("");
@@ -681,10 +684,38 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (sessionStorage.getItem(LOGIN_GATE_KEY) === "1") setLoginGatePassed(true);
   }, []);
 
+  /** 로그인 UID 구독 (프로필 Firestore 동기화용) */
+  useEffect(() => {
+    const auth = getAuthInstance();
+    if (!auth) return;
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthUid(user?.uid ?? null);
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const info = loadMyInfo();
     setMyInfo(info);
+  }, []);
+
+  /** 로그인 시 Firestore에서 프로필 불러와 로컬에 반영 (다른 기기에서 수정한 값 동기화) */
+  useEffect(() => {
+    if (!authUid) return;
+    getRemoteProfile(authUid).then((remote) => {
+      if (remote) {
+        setMyInfo(remote);
+        saveMyInfo(remote);
+      }
+    });
+  }, [authUid]);
+
+  /** 프로필 저장: 로컬 + 로그인 시 Firestore 동기화 */
+  const persistMyInfo = useCallback((info: MyInfo) => {
+    saveMyInfo(info);
+    const uid = getCurrentUserUid();
+    if (uid) void setRemoteProfile(uid, info);
   }, []);
 
   /** 이메일 인증 상태 구독: 인증 완료 시 로그인 통과 처리(유령 회원 방지) */
@@ -776,7 +807,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   useEffect(() => {
     if (!mounted) return;
-    saveMyInfo(myInfo);
+    persistMyInfo(myInfo);
   }, [myInfo, mounted]);
 
   const addGameToRecord = useCallback(() => {
@@ -1263,7 +1294,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               const { phoneNumber } = await confirmPhoneCode(conf, code);
                               const nextInfo = { ...myInfo, phoneNumber };
                               setMyInfo(nextInfo);
-                              saveMyInfo(nextInfo);
+                              persistMyInfo(nextInfo);
                               if (typeof window !== "undefined") {
                                 sessionStorage.setItem(LOGIN_GATE_KEY, "1");
                                 setLoginGatePassed(true);
@@ -1326,7 +1357,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         const { email: signedEmail, needsVerification } = await signUpWithEmail(email, password);
                         const nextInfo = { ...myInfo, email: signedEmail };
                         setMyInfo(nextInfo);
-                        saveMyInfo(nextInfo);
+                        persistMyInfo(nextInfo);
                         if (!needsVerification && typeof window !== "undefined") {
                           sessionStorage.setItem(LOGIN_GATE_KEY, "1");
                           setLoginGatePassed(true);
@@ -1366,7 +1397,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         const { email: signedEmail, emailVerified } = await signInWithEmailAuth(email, password);
                         const nextInfo = { ...myInfo, email: signedEmail };
                         setMyInfo(nextInfo);
-                        saveMyInfo(nextInfo);
+                        persistMyInfo(nextInfo);
                         if (emailVerified && typeof window !== "undefined") {
                           sessionStorage.setItem(LOGIN_GATE_KEY, "1");
                           setLoginGatePassed(true);
@@ -2514,7 +2545,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, name: e.target.value };
                           setMyInfo(next);
-                          saveMyInfo(next);
+                          persistMyInfo(next);
                         }}
                         placeholder="이름"
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
@@ -2528,7 +2559,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, gender: e.target.value as "M" | "F" };
                           setMyInfo(next);
-                          saveMyInfo(next);
+                          persistMyInfo(next);
                         }}
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                         aria-label="성별"
@@ -2544,7 +2575,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, grade: e.target.value as Grade };
                           setMyInfo(next);
-                          saveMyInfo(next);
+                          persistMyInfo(next);
                         }}
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                         aria-label="급수"
@@ -2563,7 +2594,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, phoneNumber: e.target.value.trim() || undefined };
                           setMyInfo(next);
-                          saveMyInfo(next);
+                          persistMyInfo(next);
                         }}
                         placeholder="010-1234-5678"
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
@@ -2578,7 +2609,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, birthDate: e.target.value || undefined };
                           setMyInfo(next);
-                          saveMyInfo(next);
+                          persistMyInfo(next);
                         }}
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                         aria-label="생년월일"
@@ -2607,7 +2638,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               const dataUrl = reader.result as string;
                               const next = { ...myInfo, profileImageUrl: dataUrl };
                               setMyInfo(next);
-                              saveMyInfo(next);
+                              persistMyInfo(next);
                             };
                             reader.readAsDataURL(file);
                             e.target.value = "";
