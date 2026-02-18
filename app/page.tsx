@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
@@ -2321,5 +2321,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
 }
 
 export default function Home() {
-  return <GameView gameId={null} />;
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-500 text-sm">로딩 중...</div>}>
+      <GameView gameId={null} />
+    </Suspense>
+  );
 }
