@@ -33,6 +33,8 @@ export interface MyInfo {
   profileImageUrl?: string;
   /** 카카오 이메일 (로그인 시, 표시용) */
   email?: string;
+  /** 전화번호 로그인 시 Firebase Auth에서 확인한 번호 (E.164, 표시용) */
+  phoneNumber?: string;
 }
 
 const MYINFO_KEY = "badminton-myinfo";
@@ -53,6 +55,7 @@ export function loadMyInfo(): MyInfo {
         grade,
         profileImageUrl: typeof p.profileImageUrl === "string" ? p.profileImageUrl : undefined,
         email: typeof p.email === "string" ? p.email : undefined,
+        phoneNumber: typeof p.phoneNumber === "string" ? p.phoneNumber : undefined,
       };
     }
   } catch {}
@@ -64,6 +67,7 @@ export function saveMyInfo(info: MyInfo): void {
   const payload: Record<string, string> = { name: info.name, gender: info.gender, grade: info.grade };
   if (info.profileImageUrl) payload.profileImageUrl = info.profileImageUrl;
   if (info.email) payload.email = info.email;
+  if (info.phoneNumber) payload.phoneNumber = info.phoneNumber;
   localStorage.setItem(MYINFO_KEY, JSON.stringify(payload));
 }
 

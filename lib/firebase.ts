@@ -6,6 +6,7 @@
  */
 
 import { getApp, getApps, initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -18,9 +19,10 @@ const firebaseConfig = {
 };
 
 let db: ReturnType<typeof getFirestore> | null = null;
+let auth: ReturnType<typeof getAuth> | null = null;
 
 function initFirebase(): boolean {
-  if (db) return true;
+  if (db && auth) return true;
   if (typeof window === "undefined") return false;
   if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
     console.warn("[Firebase] .env.local에 NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_PROJECT_ID 가 필요합니다.");
@@ -28,7 +30,8 @@ function initFirebase(): boolean {
   }
   try {
     const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-    db = getFirestore(app);
+    if (!db) db = getFirestore(app);
+    if (!auth) auth = getAuth(app);
     return true;
   } catch (e) {
     console.error("[Firebase] 초기화 실패:", e);
@@ -46,4 +49,9 @@ export async function ensureFirebase(): Promise<boolean> {
 
 export function getDb(): ReturnType<typeof getFirestore> | null {
   return db;
+}
+
+export function getAuthInstance(): ReturnType<typeof getAuth> | null {
+  initFirebase();
+  return auth;
 }

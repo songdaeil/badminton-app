@@ -6,7 +6,14 @@ import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loa
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
 import { ensureFirebase, getDb } from "@/lib/firebase";
 import { addSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
-import { getKakaoJsKey, initKakao, loginWithKakao, logoutKakao } from "@/lib/kakao";
+import {
+  confirmPhoneCode,
+  getCurrentPhoneUser,
+  isPhoneAuthAvailable,
+  startPhoneAuth,
+  signOutPhone,
+} from "@/lib/phone-auth";
+import type { ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
@@ -393,6 +400,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => ({ ...DEFAULT_GAME_SETTINGS }));
   /** 사용자가 선택한 '진행중' 매치 id 목록 (여러 코트 병렬 진행 가능) */
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
+  /** 앱 최초 실행 시 전체화면 로그인 화면 통과 여부 (세션 기준, 건너뛰기/로그인 후 메인 표시) */
+  const [loginGatePassed, setLoginGatePassed] = useState(false);
+  /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
+  const [phoneStep, setPhoneStep] = useState<"idle" | "sending" | "code" | "error">("idle");
+  const [phoneNumberInput, setPhoneNumberInput] = useState("");
+  const [phoneCodeInput, setPhoneCodeInput] = useState("");
+  const [phoneError, setPhoneError] = useState("");
+  const phoneConfirmationResultRef = useRef<ConfirmationResult | null>(null);
   /** 하단 네비로 이동하는 화면: setting(경기 세팅) | record(경기 목록) | myinfo(나의 정보) */
   const [navView, setNavView] = useState<"setting" | "record" | "myinfo">("setting");
   /** 경기 목록에서 선택한 경기 id (목록에서 하나 고르면 이 경기 로드) */
@@ -412,7 +427,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 경기 목록에서 이름 클릭 시 하이라이트할 멤버 id (파트너/상대 직관 확인용) */
   const [highlightMemberId, setHighlightMemberId] = useState<string | null>(null);
   /** 카카오 로그인 진행 중 / 메시지 */
-  const [kakaoLoginStatus, setKakaoLoginStatus] = useState<string | null>(null);
+  /** 나의 정보에서 로그아웃 등 안내 메시지 (잠깐 표시) */
+  const [loginMessage, setLoginMessage] = useState<string | null>(null);
   /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   /** Firestore에서 내려온 데이터 적용 시 다음 save 시 Firestore 업로드 스킵 */
@@ -641,39 +657,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
     router.replace("/", { scroll: false });
   }, [gameId, searchParams, router]);
 
+  const LOGIN_GATE_KEY = "badminton_login_passed";
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    let info = loadMyInfo();
-    let loggedInWithKakao = false;
-    try {
-      const pending = sessionStorage.getItem("kakao_profile_pending");
-      if (pending) {
-        const parsed = JSON.parse(pending) as { nickname?: string; email?: string; profileImageUrl?: string };
-        const profileImageUrl = (parsed.profileImageUrl ?? "").trim() || undefined;
-        info = {
-          ...info,
-          email: (parsed.email ?? "").trim() || info.email,
-          profileImageUrl: profileImageUrl ?? info.profileImageUrl,
-        };
-        saveMyInfo(info);
-        sessionStorage.removeItem("kakao_profile_pending");
-        loggedInWithKakao = true;
-      }
-    } catch {
-      // ignore
-    }
+    if (sessionStorage.getItem(LOGIN_GATE_KEY) === "1") setLoginGatePassed(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const info = loadMyInfo();
     setMyInfo(info);
-    if (loggedInWithKakao) {
-      setKakaoLoginStatus("카카오로 로그인되었습니다.");
-      try {
-        if (typeof window !== "undefined" && sessionStorage.getItem("kakao_return_to_myinfo")) {
-          setNavView("myinfo");
-          sessionStorage.removeItem("kakao_return_to_myinfo");
-        }
-      } catch {
-        // ignore
-      }
-    }
   }, []);
 
   useEffect(() => {
@@ -1064,6 +1058,162 @@ export function GameView({ gameId }: { gameId: string | null }) {
     return (
       <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center">
         <div className="text-[#6e6e73] text-sm font-medium">로딩 중...</div>
+      </div>
+    );
+  }
+
+  if (!loginGatePassed) {
+    return (
+      <div className="min-h-screen min-h-[100dvh] bg-[#f5f5f7] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
+        <div className="w-full max-w-sm flex flex-col items-center gap-8">
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-bold text-[#1d1d1f] tracking-tight">경기 이사</h1>
+            <p className="text-sm text-slate-500">배드민턴 경기 명단·대진·결과를 함께 관리하세요</p>
+          </div>
+          <div className="w-full space-y-3">
+            {/* 전화번호 로그인 */}
+            {isPhoneAuthAvailable() && (
+              <div className="space-y-2">
+                  <p className="text-xs text-slate-600 font-medium">전화번호로 로그인</p>
+                  {phoneStep === "idle" && (
+                    <>
+                      <input
+                        type="tel"
+                        value={phoneNumberInput}
+                        onChange={(e) => {
+                          setPhoneNumberInput(e.target.value);
+                          setPhoneError("");
+                        }}
+                        placeholder="010-1234-5678"
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        aria-label="전화번호"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const trimmed = phoneNumberInput.replace(/\s/g, "").trim();
+                          if (!trimmed || trimmed.replace(/\D/g, "").length < 10) {
+                            setPhoneError("올바른 전화번호를 입력해 주세요.");
+                            return;
+                          }
+                          setPhoneError("");
+                          setPhoneStep("sending");
+                          try {
+                            await ensureFirebase();
+                            const result = await startPhoneAuth(trimmed);
+                            phoneConfirmationResultRef.current = result;
+                            setPhoneStep("code");
+                            setPhoneCodeInput("");
+                          } catch (e: unknown) {
+                            let msg = "인증문자 전송에 실패했습니다.";
+                            const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : "";
+                            if (code === "auth/configuration-not-found") {
+                              msg = "Firebase 콘솔에서 전화번호 로그인을 켜주세요. Authentication → Sign-in method → 전화번호 사용 설정, 그리고 허용 도메인에 이 사이트 주소를 추가해 주세요.";
+                            } else if (code === "auth/billing-not-enabled") {
+                              msg = "전화번호 로그인은 Firebase Blaze 요금제에서만 사용할 수 있습니다. Firebase 콘솔 → 프로젝트 설정 → 사용량 및 결제 → Blaze로 업그레이드 후 다시 시도해 주세요.";
+                            } else if (e instanceof Error) {
+                              msg = e.message;
+                            }
+                            setPhoneError(msg);
+                            setPhoneStep("idle");
+                          }
+                        }}
+                        className="w-full py-2.5 rounded-xl text-sm font-medium bg-slate-800 text-white hover:bg-slate-700 transition-colors btn-tap"
+                      >
+                        인증문자 보내기
+                      </button>
+                    </>
+                  )}
+                  {phoneStep === "sending" && (
+                    <p className="text-center text-sm text-slate-500 py-2">전송 중...</p>
+                  )}
+                  {phoneStep === "code" && (
+                    <>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={phoneCodeInput}
+                        onChange={(e) => {
+                          setPhoneCodeInput(e.target.value.replace(/\D/g, "").slice(0, 6));
+                          setPhoneError("");
+                        }}
+                        placeholder="인증번호 6자리"
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-numeric focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        aria-label="인증번호"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            phoneConfirmationResultRef.current = null;
+                            setPhoneStep("idle");
+                            setPhoneCodeInput("");
+                            setPhoneError("");
+                          }}
+                          className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
+                        >
+                          취소
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const code = phoneCodeInput.trim();
+                            if (code.length !== 6) {
+                              setPhoneError("인증번호 6자리를 입력해 주세요.");
+                              return;
+                            }
+                            const conf = phoneConfirmationResultRef.current;
+                            if (!conf) {
+                              setPhoneError("인증을 다시 시도해 주세요.");
+                              return;
+                            }
+                            setPhoneError("");
+                            setPhoneStep("sending");
+                            try {
+                              const { phoneNumber } = await confirmPhoneCode(conf, code);
+                              const nextInfo = { ...myInfo, phoneNumber };
+                              setMyInfo(nextInfo);
+                              saveMyInfo(nextInfo);
+                              if (typeof window !== "undefined") {
+                                sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+                                setLoginGatePassed(true);
+                              }
+                            } catch (e) {
+                              const msg = e instanceof Error ? e.message : "인증에 실패했습니다.";
+                              setPhoneError(msg);
+                              setPhoneStep("code");
+                            }
+                          }}
+                          className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+                        >
+                          인증 완료
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {phoneError && (
+                    <p className="text-xs text-amber-600" role="alert">
+                      {phoneError}
+                    </p>
+                  )}
+                </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+                  setLoginGatePassed(true);
+                }
+              }}
+              className="w-full py-3 rounded-xl text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors btn-tap"
+            >
+              로그인 없이 둘러보기
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -2080,54 +2230,41 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {/* 로그인 기능 최상단 */}
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
               <div className="px-3 py-3 space-y-3">
-                {getKakaoJsKey() && (
+                {isPhoneAuthAvailable() && (myInfo.phoneNumber || getCurrentPhoneUser()) && (
                   <>
+                    <p className="text-xs text-slate-500">
+                      전화번호: {myInfo.phoneNumber || getCurrentPhoneUser()?.phoneNumber || ""}
+                    </p>
                     <button
                       type="button"
-                      onClick={() => {
-                        setKakaoLoginStatus("리다이렉트 중...");
-                        if (typeof window !== "undefined") initKakao();
-                        loginWithKakao();
-                      }}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-medium bg-[#FEE500] text-[#191919] hover:bg-[#fdd835] transition-colors btn-tap"
-                    >
-                      <span className="text-lg">💬</span>
-                      카카오로 시작
-                    </button>
-                    <div className="flex items-center gap-2">
-                      <span className="flex-1 h-px bg-slate-200" />
-                      <span className="text-xs text-slate-400">또는</span>
-                      <span className="flex-1 h-px bg-slate-200" />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        logoutKakao();
-                        setMyInfo((prev) => ({ ...prev, profileImageUrl: undefined, email: undefined }));
-                        setKakaoLoginStatus("카카오에서 로그아웃했습니다.");
+                      onClick={async () => {
+                        await signOutPhone();
+                        setMyInfo((prev) => ({ ...prev, phoneNumber: undefined }));
+                        setLoginMessage("전화번호 로그아웃했습니다.");
                       }}
                       className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
                     >
-                      카카오 로그아웃
+                      전화번호 로그아웃
                     </button>
                   </>
                 )}
-                {kakaoLoginStatus && (
-                  <p
-                    className={`text-xs px-2 py-1.5 rounded-lg ${
-                      kakaoLoginStatus === "카카오로 로그인되었습니다."
-                        ? "bg-amber-100 text-amber-900 font-medium border border-amber-200"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    {kakaoLoginStatus}
+                {loginMessage && (
+                  <p className="text-xs px-2 py-1.5 rounded-lg text-slate-500 bg-slate-100">
+                    {loginMessage}
                   </p>
                 )}
-                {!getKakaoJsKey() && (
-                  <p className="text-xs text-amber-600">
-                    로컬: .env.local에 NEXT_PUBLIC_KAKAO_JAVASCRIPT_KEY 추가 후 개발 서버 재시작. 배포(Vercel): 프로젝트 설정 → Environment Variables에 동일 키 추가 후 재배포.
-                  </p>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      sessionStorage.removeItem(LOGIN_GATE_KEY);
+                      setLoginGatePassed(false);
+                    }
+                  }}
+                  className="w-full px-4 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors btn-tap"
+                >
+                  처음 로그인 화면으로
+                </button>
               </div>
             </div>
             <p className="text-sm text-slate-600 leading-snug mb-1.5">로그인 정보, 가입 클럽, 승률 통계를 확인·수정할 수 있습니다.</p>
@@ -2272,9 +2409,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <button
           type="button"
           onClick={() => setNavView("myinfo")}
-          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${myInfo.profileImageUrl ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
+          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${myInfo.phoneNumber ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
         >
-          {myInfo.profileImageUrl && (
+          {myInfo.phoneNumber && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden title="로그인됨" />
           )}
           <img src="/myinfo-icon.png" alt="" className="w-10 h-10 object-contain" />
