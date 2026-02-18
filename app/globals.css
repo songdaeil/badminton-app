@@ -44,8 +44,10 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  letter-spacing: 0.01em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   /* 앱처럼: 노치·홈 인디케이터 영역 피하기 */
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   /* 스크롤 끝에서 바운스 줄이기 (앱 느낌) */
@@ -95,9 +97,10 @@ head div {
   box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
 }
 
-/* 숫자 전용 폰트 (Arial Narrow) */
+/* 숫자 정렬용: 본문과 동일 글꼴 + 고정폭 숫자 */
 .font-numeric {
-  font-family: "Arial Narrow", Arial, sans-serif;
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 액션 시 애니메이션 */

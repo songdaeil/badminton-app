@@ -27,6 +27,7 @@ import {
 import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
+import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
 
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
 function encodeGameForShare(data: GameData): string {
@@ -416,6 +417,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [loginGatePassed, setLoginGatePassed] = useState(false);
   /** 로그인한 사용자 UID (프로필 Firestore 동기화용) */
   const [authUid, setAuthUid] = useState<string | null>(null);
+  /** 로그인 후 프로필 업로드 완료 여부 (true: 원격 로드됨 또는 업로드 성공. 이전에만 경기 방식·경기 목록 이용 가능) */
+  const [hasUploadedProfileAfterLogin, setHasUploadedProfileAfterLogin] = useState(false);
   /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
   const [phoneStep, setPhoneStep] = useState<"idle" | "sending" | "code" | "error">("idle");
   const [phoneNumberInput, setPhoneNumberInput] = useState("");
@@ -707,23 +710,54 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setMyInfo(info);
   }, []);
 
-  /** 로그인 시 Firestore에서 프로필 불러와 로컬에 반영 (다른 기기에서 수정한 값 동기화) */
+  /** 로그인 시 Firestore에서 프로필 불러와 로컬에 반영 (원격에 있으면 업로드 완료로 간주) */
   useEffect(() => {
     if (!authUid) return;
     getRemoteProfile(authUid).then((remote) => {
       if (remote) {
         setMyInfo(remote);
         saveMyInfo(remote);
+        setHasUploadedProfileAfterLogin(true);
+      } else {
+        setHasUploadedProfileAfterLogin(false);
       }
     });
   }, [authUid]);
 
-  /** 프로필을 Firestore에 업로드 (업데이트 버튼으로만 호출) */
+  /** 프로필 필수 항목 유무 (동기화 후 사용자가 지워도 검사) */
+  const hasRequiredProfileFields = (): boolean => {
+    if (!myInfo.name?.trim()) return false;
+    if (!myInfo.birthDate?.trim()) return false;
+    const g = myInfo.grade ?? "D";
+    if (g !== "A" && g !== "B" && g !== "C" && g !== "D") return false;
+    return true;
+  };
+  /** 업로드까지 했고, 현재 프로필에 필수 항목이 모두 있으면 완성 (아이콘 채움·경기 방식/목록 이용 가능) */
+  const isProfileComplete = hasUploadedProfileAfterLogin && hasRequiredProfileFields();
+
+  /** 프로필 완성 전에는 경기 방식·경기 목록 비활성: 해당 탭이면 myinfo로 이동 */
+  useEffect(() => {
+    if (!authUid || isProfileComplete) return;
+    if (navView === "setting" || navView === "record") setNavView("myinfo");
+  }, [authUid, isProfileComplete, navView]);
+
+  /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
   const uploadProfileToFirestore = useCallback(async () => {
     const uid = getCurrentUserUid();
     if (!uid) return;
+    if (!myInfo.name?.trim()) {
+      setLoginMessage("이름을 입력한 뒤 업로드해 주세요.");
+      setTimeout(() => setLoginMessage(null), 3000);
+      return;
+    }
+    if (!myInfo.birthDate?.trim()) {
+      setLoginMessage("생년월일을 입력한 뒤 업로드해 주세요.");
+      setTimeout(() => setLoginMessage(null), 3000);
+      return;
+    }
     const ok = await setRemoteProfile(uid, myInfo);
     if (ok) {
+      setHasUploadedProfileAfterLogin(true);
       setLoginMessage("프로필이 클라우드에 업로드되었습니다.");
       setTimeout(() => setLoginMessage(null), 3000);
     } else {
@@ -1438,18 +1472,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                if (typeof window !== "undefined") {
-                  sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-                  setLoginGatePassed(true);
-                }
-              }}
-              className="w-full py-3 rounded-xl text-sm font-medium text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors btn-tap"
-            >
-              로그인 없이 둘러보기
-            </button>
             <p className="text-center pt-4">
               <a
                 href="/privacy.html"
@@ -1471,11 +1493,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
       {/* 헤더 - Apple 스타일: 블러, 미니멀 */}
       <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-xl border-b border-[#e8e8ed] safe-area-pb">
         <div className="flex items-center gap-3 px-3 py-4">
-          <span className="text-2xl flex items-center shrink-0" aria-hidden>
-            {navView === "setting" && <img src="/game-mode-icon.png?v=2" alt="" className="w-12 h-12 object-contain" />}
-            {navView === "record" && <img src="/game-list-icon.png" alt="" className="w-12 h-12 object-contain" />}
-            {navView === "myinfo" && <img src="/myinfo-icon.png" alt="" className="w-12 h-12 object-contain" />}
-          </span>
           <h1 className="text-[1.25rem] font-semibold tracking-tight text-[#1d1d1f] flex items-center gap-1.5">
             {navView === "setting" && (
               <>
@@ -1552,8 +1569,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden min-w-0">
-            {/* 상단 카테고리 탭 - 줄바꿈 방지 */}
-            <div className="flex border-b border-[#e8e8ed] overflow-x-auto flex-nowrap">
+            {/* 상단 카테고리 탭 - 좁은 폭에서 크기 자동 보정, 균등 분배 */}
+            <div className="flex border-b border-[#e8e8ed] flex-nowrap min-w-0">
               {GAME_CATEGORIES.map((cat) => {
                 const modesInCat = GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === cat.id);
                 const isActive = gameModeCategoryId === cat.id;
@@ -1570,10 +1587,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         setGameSettings((prev) => ({ ...prev, scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore }));
                       }
                     }}
-                    className={`shrink-0 px-2.5 py-2 text-lg font-medium border-b-2 transition-colors flex items-center gap-2 ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
+                    className={`flex-1 min-w-0 px-1.5 py-2 sm:px-2.5 sm:py-2 text-[clamp(0.8125rem,2.2vw,1.125rem)] font-medium border-b-2 transition-colors flex items-center justify-center gap-1 sm:gap-2 ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
                   >
-                    {cat.Icon && <cat.Icon size={32} className="shrink-0" />}
-                    <span>{cat.label}</span>
+                    {cat.Icon && (
+                      <span className="shrink-0 w-[clamp(1.25rem,6vw,2rem)] h-[clamp(1.25rem,6vw,2rem)] flex items-center justify-center">
+                        <cat.Icon size="responsive" className="w-full h-full" />
+                      </span>
+                    )}
+                    <span className="truncate">{cat.label}</span>
                   </button>
                 );
               })}
@@ -2787,9 +2808,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <button
                   type="button"
                   onClick={uploadProfileToFirestore}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap"
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
                 >
-                  클라우드에 업데이트
+                  업로드
                 </button>
                 <span className="text-xs text-slate-500">다른 기기에서 로그인 시 이 프로필이 적용됩니다.</span>
               </div>
@@ -2804,22 +2825,39 @@ export function GameView({ gameId }: { gameId: string | null }) {
         )}
       </main>
 
-      {/* 하단 네비 - 블러·미니멀 */}
+      {/* 하단 네비 - 블러·미니멀 (프로필 업로드 전에는 경기 방식·경기 목록 비활성) */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-[#e8e8ed] flex justify-start gap-0 px-2 py-2 shadow-[0_-1px_0_0_rgba(0,0,0,0.06)]">
         <button
           type="button"
-          onClick={() => setNavView("setting")}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
+          onClick={() => {
+            if (!isProfileComplete) {
+              setNavView("myinfo");
+              setShareToast("프로필을 입력한 뒤 업로드하면 이용할 수 있습니다.");
+              setTimeout(() => setShareToast(null), 3000);
+              return;
+            }
+            setNavView("setting");
+          }}
+          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          <img src="/game-mode-icon.png?v=2" alt="" className="w-10 h-10 object-contain" />
+          <NavIconGameMode className="w-10 h-10 shrink-0" />
           <span className="text-sm font-medium leading-tight">경기 방식</span>
         </button>
         <button
           type="button"
-          onClick={() => { setNavView("record"); setSelectedGameId(null); }}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
+          onClick={() => {
+            if (!isProfileComplete) {
+              setNavView("myinfo");
+              setShareToast("프로필을 입력한 뒤 업로드하면 이용할 수 있습니다.");
+              setTimeout(() => setShareToast(null), 3000);
+              return;
+            }
+            setNavView("record");
+            setSelectedGameId(null);
+          }}
+          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          <img src="/game-list-icon.png" alt="" className="w-10 h-10 object-contain" />
+          <NavIconGameList className="w-10 h-10 shrink-0" />
           <span className="text-sm font-medium leading-tight">경기 목록</span>
         </button>
         <button
@@ -2830,7 +2868,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden title="로그인됨" />
           )}
-          <img src="/myinfo-icon.png" alt="" className="w-10 h-10 object-contain" />
+          <NavIconMyInfo className="w-10 h-10 shrink-0" filled={isProfileComplete} />
           <span className="text-sm font-medium leading-tight">경기 이사</span>
         </button>
       </nav>
