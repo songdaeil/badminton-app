@@ -449,6 +449,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 카카오 로그인 진행 중 / 메시지 */
   /** 나의 정보에서 로그아웃 등 안내 메시지 (잠깐 표시) */
   const [loginMessage, setLoginMessage] = useState<string | null>(null);
+  /** 나의 프로필: 상세 수정 폼 열림 여부 */
+  const [profileEditOpen, setProfileEditOpen] = useState(false);
+  /** 프로필 수정 창 퇴장 애니메이션 재생 중 (좌→우 슬라이드 아웃 후 언마운트) */
+  const [profileEditClosing, setProfileEditClosing] = useState(false);
+  /** 경기 상세 퇴장 애니메이션 재생 중 (우측으로 슬라이드 아웃 후 목록으로) */
+  const [recordDetailClosing, setRecordDetailClosing] = useState(false);
   /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   /** Firestore에서 내려온 데이터 적용 시 다음 save 시 Firestore 업로드 스킵 */
@@ -1541,7 +1547,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
       <main className="flex-1 px-2 pb-24 overflow-auto">
         {navView === "setting" && (
-        <div key="setting" className="space-y-2 pt-4 animate-fade-in">
+        <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden min-w-0">
@@ -1628,13 +1634,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         <div>
                           <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">경기수·소요시간</p>
                           <div className="overflow-x-auto mt-0.5 min-w-0">
-                            <table className="w-full min-w-[240px] table-fixed border-collapse text-xs text-slate-600 leading-tight font-numeric">
+                            <table className="w-full min-w-[240px] table-auto border-collapse text-xs text-slate-600 leading-tight font-numeric">
                               <colgroup>
-                                <col style={{ width: "20%" }} />
-                                <col style={{ width: "20%" }} />
-                                <col style={{ width: "20%" }} />
-                                <col style={{ width: "20%" }} />
-                                <col style={{ width: "20%" }} />
+                                <col className="min-w-0" />
+                                <col className="min-w-0" />
+                                <col className="min-w-0" />
+                                <col className="min-w-0" />
+                                <col style={{ minWidth: "4.5rem" }} />
                               </colgroup>
                               <thead>
                                 <tr className="bg-slate-100">
@@ -1703,9 +1709,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
 
-        {navView === "record" && !selectedGameId && (
+        {navView === "record" && (
+        <div key="record-wrap" className="relative pt-4 min-h-[70vh]">
+        {!selectedGameId && (
         /* 경기 목록: Firestore 동기화된 카드는 listRefreshKey 갱신 시 최신 데이터 표시 */
-        <div key={`record-list-${listRefreshKey}`} className="pt-4 space-y-0.5 animate-fade-in">
+        <div key={`record-list-${listRefreshKey}`} className="space-y-0.5 animate-fade-in-up">
           {(() => {
             const gameIds = loadGameList();
             const sortedIds = [...gameIds].sort((a, b) => {
@@ -1769,8 +1777,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const waitingCount = total - completedCount - ongoingCount;
                 const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
                 const isMenuOpen = listMenuOpenId === id;
+                const staggerClass = ["animate-stagger-1", "animate-stagger-2", "animate-stagger-3", "animate-stagger-4", "animate-stagger-5", "animate-stagger-6", "animate-stagger-7", "animate-stagger-8"][index % 8];
                 return (
-                  <li key={id} className={`relative ${isNewest ? "animate-slide-up" : ""}`}>
+                  <li key={id} className={`relative animate-fade-in-up ${staggerClass}`}>
                     {isNewest && (
                       <span className="absolute left-0 top-0 z-10" style={{ width: 18, height: 18 }}>
                         <span className="absolute left-0 top-0 block" style={{ width: 0, height: 0, borderStyle: "solid", borderWidth: "18px 18px 0 0", borderColor: "#f59e0b transparent transparent transparent" }} />
@@ -1919,15 +1928,31 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
 
-        {navView === "record" && selectedGameId && (
-        <div key="record-detail" className="animate-fade-in">
-        <div className="space-y-4 pt-4">
+        {selectedGameId && (
+        <div
+          key="record-detail"
+          className="absolute inset-0 pt-4 bg-[var(--background)] overflow-y-auto"
+          style={{
+            animation: recordDetailClosing
+              ? "slideOutToLeftOverlay 0.25s cubic-bezier(0.32, 0.72, 0, 1) forwards"
+              : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
+          }}
+        >
+        <div className="space-y-4 pb-8">
         {/* 선택한 경기: 경기 요약·명단·대진·현황·랭킹 */}
           <div className="flex items-center justify-between gap-2 pb-2">
             <button
               type="button"
-              onClick={() => setSelectedGameId(null)}
-              className="text-sm font-medium text-[#0071e3] hover:underline"
+              onClick={() => {
+                if (recordDetailClosing) return;
+                setRecordDetailClosing(true);
+                setTimeout(() => {
+                  setSelectedGameId(null);
+                  setRecordDetailClosing(false);
+                }, 250);
+              }}
+              disabled={recordDetailClosing}
+              className="text-sm font-medium text-[#0071e3] hover:underline disabled:opacity-70 disabled:pointer-events-none"
             >
               ← 목록으로
             </button>
@@ -2465,9 +2490,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         </div>
         )}
+        </div>
+        )}
 
         {navView === "myinfo" && (
-          <div key="myinfo" className="pt-4 space-y-2 animate-fade-in">
+          <div key="myinfo" className="pt-4 space-y-2 animate-fade-in-up">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
             {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
               <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
@@ -2507,15 +2534,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
             ) : null}
 
-            {/* 나의 프로필 수정 (로그인 시) */}
+            {/* 나의 프로필 (로그인 시): 요약 + 프로필 수정 뱃지 → 클릭 시 상세 폼 */}
             {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
               <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
-                <div className="px-3 py-3 border-b border-[#e8e8ed]">
-                  <h3 className="text-sm font-semibold text-slate-800">나의 프로필 수정</h3>
+                <div className="px-2.5 py-2 border-b border-[#e8e8ed]">
+                  <h3 className="text-sm font-semibold text-slate-800">나의 프로필</h3>
                 </div>
-                <div className="px-3 py-3 space-y-4">
-                  <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-50 border border-slate-100">
-                    <div className="flex-shrink-0 w-14 h-14 rounded-full overflow-hidden bg-slate-200 ring-2 ring-white shadow">
+                <div className="px-2.5 py-2 space-y-2">
+                  <div className="flex items-center gap-2 p-1.5 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden bg-slate-200 ring-2 ring-white shadow">
                       {myInfo.profileImageUrl ? (
                         <img
                           src={myInfo.profileImageUrl}
@@ -2538,135 +2565,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       </p>
                       {myInfo.birthDate && <p className="text-xs text-slate-500">생년월일 {myInfo.birthDate}</p>}
                     </div>
-                  </div>
-                  <div className="grid gap-3">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">이름</label>
-                      <input
-                        type="text"
-                        value={myInfo.name}
-                        onChange={(e) => {
-                          const next = { ...myInfo, name: e.target.value };
-                          setMyInfo(next);
-                          saveMyInfo(next);
-                        }}
-                        placeholder="이름"
-                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                        aria-label="이름"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">성별</label>
-                      <select
-                        value={myInfo.gender}
-                        onChange={(e) => {
-                          const next = { ...myInfo, gender: e.target.value as "M" | "F" };
-                          setMyInfo(next);
-                          saveMyInfo(next);
-                        }}
-                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
-                        aria-label="성별"
-                      >
-                        <option value="M">남</option>
-                        <option value="F">여</option>
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">급수</label>
-                      <select
-                        value={myInfo.grade ?? "D"}
-                        onChange={(e) => {
-                          const next = { ...myInfo, grade: e.target.value as Grade };
-                          setMyInfo(next);
-                          saveMyInfo(next);
-                        }}
-                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
-                        aria-label="급수"
-                      >
-                        <option value="A">A</option>
-                        <option value="B">B</option>
-                        <option value="C">C</option>
-                        <option value="D">D</option>
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">전화번호 (연락처)</label>
-                      <input
-                        type="tel"
-                        value={myInfo.phoneNumber ?? ""}
-                        onChange={(e) => {
-                          const next = { ...myInfo, phoneNumber: e.target.value.trim() || undefined };
-                          setMyInfo(next);
-                          saveMyInfo(next);
-                        }}
-                        placeholder="010-1234-5678"
-                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                        aria-label="전화번호"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">생년월일</label>
-                      <input
-                        type="date"
-                        value={myInfo.birthDate ?? ""}
-                        onChange={(e) => {
-                          const next = { ...myInfo, birthDate: e.target.value || undefined };
-                          setMyInfo(next);
-                          saveMyInfo(next);
-                        }}
-                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                        aria-label="생년월일"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">프로필 사진</label>
-                      <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-white text-sm text-slate-700 hover:bg-slate-50 cursor-pointer btn-tap">
-                        <span>📷</span>
-                        <span>파일 선택</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="sr-only"
-                          aria-label="프로필 사진 파일 선택"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            const maxKB = 200;
-                            if (file.size > maxKB * 1024) {
-                              alert(`파일이 너무 큽니다. ${maxKB}KB 이하로 줄여 주세요.`);
-                              return;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              const dataUrl = reader.result as string;
-                              const next = { ...myInfo, profileImageUrl: dataUrl };
-                              setMyInfo(next);
-                              saveMyInfo(next);
-                            };
-                            reader.readAsDataURL(file);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                      <span className="text-xs text-slate-500">200KB 이하 권장</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-3">
-                      <span className="shrink-0 w-28" />
-                      <button
-                        type="button"
-                        onClick={uploadProfileToFirestore}
-                        className="px-4 py-2 rounded-xl text-sm font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap"
-                      >
-                        클라우드에 업데이트
-                      </button>
-                      <span className="text-xs text-slate-500">다른 기기에서 로그인 시 이 프로필이 적용됩니다.</span>
-                    </div>
-                    {loginMessage && (
-                      <p className="text-xs text-slate-600 mt-2 px-1">{loginMessage}</p>
-                    )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setProfileEditOpen(true)}
+                      className="shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap"
+                    >
+                      프로필 수정
+                    </button>
                   </div>
                 </div>
+              </div>
             )}
 
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
@@ -2728,6 +2636,168 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </div>
               </div>
             </div>
+
+            {/* 프로필 수정 (경기 이사 섹션 하위 창) */}
+            {(profileEditOpen || profileEditClosing) && (
+        <div
+          className="fixed inset-0 z-30 bg-[var(--background)] flex flex-col max-w-md mx-auto left-0 right-0"
+          style={{
+            animation: profileEditClosing
+              ? "slideOutToLeftOverlay 0.25s cubic-bezier(0.32, 0.72, 0, 1) forwards"
+              : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
+          }}
+          aria-modal="true"
+        >
+          <header className="flex items-center gap-2 shrink-0 px-3 py-2.5 border-b border-[#e8e8ed] bg-white">
+            <button
+              type="button"
+              onClick={() => {
+                if (profileEditClosing) return;
+                setProfileEditClosing(true);
+                setTimeout(() => {
+                  setProfileEditOpen(false);
+                  setProfileEditClosing(false);
+                }, 250);
+              }}
+              disabled={profileEditClosing}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors btn-tap disabled:opacity-70 disabled:pointer-events-none"
+              aria-label="뒤로가기"
+            >
+              <span aria-hidden>←</span>
+              <span>뒤로가기</span>
+            </button>
+            <h2 className="text-sm font-semibold text-slate-800 flex-1 text-center pr-12">프로필 수정</h2>
+          </header>
+          <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-2">
+            <div className="grid gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">이름</label>
+                <input
+                  type="text"
+                  value={myInfo.name}
+                  onChange={(e) => {
+                    const next = { ...myInfo, name: e.target.value };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  placeholder="이름"
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  aria-label="이름"
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">성별</label>
+                <select
+                  value={myInfo.gender}
+                  onChange={(e) => {
+                    const next = { ...myInfo, gender: e.target.value as "M" | "F" };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  aria-label="성별"
+                >
+                  <option value="M">남</option>
+                  <option value="F">여</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">급수</label>
+                <select
+                  value={myInfo.grade ?? "D"}
+                  onChange={(e) => {
+                    const next = { ...myInfo, grade: e.target.value as Grade };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  aria-label="급수"
+                >
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="D">D</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">전화번호 (연락처)</label>
+                <input
+                  type="tel"
+                  value={myInfo.phoneNumber ?? ""}
+                  onChange={(e) => {
+                    const next = { ...myInfo, phoneNumber: e.target.value.trim() || undefined };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  placeholder="010-1234-5678"
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  aria-label="전화번호"
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">생년월일</label>
+                <input
+                  type="date"
+                  value={myInfo.birthDate ?? ""}
+                  onChange={(e) => {
+                    const next = { ...myInfo, birthDate: e.target.value || undefined };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  aria-label="생년월일"
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">프로필 사진</label>
+                <label className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-white text-sm text-slate-700 hover:bg-slate-50 cursor-pointer btn-tap">
+                  <span>📷</span>
+                  <span>파일 선택</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    aria-label="프로필 사진 파일 선택"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const maxKB = 200;
+                      if (file.size > maxKB * 1024) {
+                        alert(`파일이 너무 큽니다. ${maxKB}KB 이하로 줄여 주세요.`);
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const dataUrl = reader.result as string;
+                        const next = { ...myInfo, profileImageUrl: dataUrl };
+                        setMyInfo(next);
+                        saveMyInfo(next);
+                      };
+                      reader.readAsDataURL(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                <span className="text-xs text-slate-500">200KB 이하 권장</span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-2">
+                <span className="shrink-0 w-28" />
+                <button
+                  type="button"
+                  onClick={uploadProfileToFirestore}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap"
+                >
+                  클라우드에 업데이트
+                </button>
+                <span className="text-xs text-slate-500">다른 기기에서 로그인 시 이 프로필이 적용됩니다.</span>
+              </div>
+              {loginMessage && (
+                <p className="text-xs text-slate-600 mt-1 px-1">{loginMessage}</p>
+              )}
+            </div>
+          </div>
+        </div>
+            )}
           </div>
         )}
       </main>
@@ -2737,7 +2807,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <button
           type="button"
           onClick={() => setNavView("setting")}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
+          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
           <img src="/game-mode-icon.png?v=2" alt="" className="w-10 h-10 object-contain" />
           <span className="text-sm font-medium leading-tight">경기 방식</span>
@@ -2745,7 +2815,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <button
           type="button"
           onClick={() => { setNavView("record"); setSelectedGameId(null); }}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
+          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
           <img src="/game-list-icon.png" alt="" className="w-10 h-10 object-contain" />
           <span className="text-sm font-medium leading-tight">경기 목록</span>
@@ -2753,7 +2823,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <button
           type="button"
           onClick={() => setNavView("myinfo")}
-          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${(getCurrentPhoneUser() || getCurrentEmailUser()) ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
+          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${(getCurrentPhoneUser() || getCurrentEmailUser()) ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
         >
           {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden title="로그인됨" />
@@ -2765,13 +2835,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
       {/* 경기 생성 전 확인 모달 */}
       {shareToast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm shadow-lg" role="status">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm shadow-lg animate-scale-in" role="status">
           {shareToast}
         </div>
       )}
       {showRegenerateConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" aria-modal="true" role="alertdialog" aria-labelledby="regenerate-confirm-title">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-4 space-y-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-fade-in" aria-modal="true" role="alertdialog" aria-labelledby="regenerate-confirm-title">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-4 space-y-3 animate-scale-in">
             <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
               적용하면 현재 경기 명단 기준으로 경기 현황이 다시 생성됩니다. 지금까지 입력한 경기 결과·설정이 모두 변경됩니다. 계속하시겠습니까?
             </p>
