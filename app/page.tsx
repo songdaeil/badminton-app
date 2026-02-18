@@ -42,11 +42,29 @@ function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): M
   }));
 }
 
+/** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
+const GAME_CATEGORIES = [
+  { id: "doubles", label: "복식" },
+  { id: "singles", label: "단식" },
+  { id: "contest", label: "대항전" },
+  { id: "team", label: "단체" },
+] as const;
+
 /** 경기 방식 목록. 선택한 방식이 경기 설정(한 경기당 몇 점 등)에 반영됨 */
 const GAME_MODES: GameMode[] = [
   {
     id: "individual",
-    label: "개인전 (4~12명)",
+    label: "개인전a",
+    categoryId: "doubles",
+    minPlayers: 4,
+    maxPlayers: 12,
+    defaultScoreLimit: 21,
+    scoreLimitOptions: [15, 21, 30],
+  },
+  {
+    id: "individual_b",
+    label: "개인전b",
+    categoryId: "doubles",
     minPlayers: 4,
     maxPlayers: 12,
     defaultScoreLimit: 21,
@@ -237,6 +255,10 @@ function generateMatchesByGameMode(gameModeId: string, members: Member[]): Match
     const target = getTargetTotalGames(members.length);
     return buildRoundRobinMatches(members, target);
   }
+  if (gameModeId === "individual_b") {
+    // 개인전b 전용 경기 생성 로직 (추후 규칙에 맞게 구현)
+    return [];
+  }
   return [];
 }
 
@@ -320,6 +342,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [gameName, setGameName] = useState<string>("");
   /** 선택된 경기 방식 id (저장·로드 반영) */
   const [gameModeId, setGameModeId] = useState<string>(GAME_MODES[0].id);
+  /** 경기 방식 카테고리 탭 (복식/단식/대항전/단체/기타) */
+  const [gameModeCategoryId, setGameModeCategoryId] = useState<string>(() => GAME_MODES[0].categoryId ?? GAME_CATEGORIES[0].id);
   /** 경기 설정: 언제, 어디서, 한 경기당 몇 점 (선택한 경기 방식 기준) */
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => ({ ...DEFAULT_GAME_SETTINGS }));
   /** 사용자가 선택한 '진행중' 매치 id 목록 (여러 코트 병렬 진행 가능) */
@@ -354,6 +378,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setMatches([]);
       setGameName("");
       setGameModeId(GAME_MODES[0].id);
+      setGameModeCategoryId(GAME_MODES[0].categoryId ?? GAME_CATEGORIES[0].id);
       setGameSettings({ ...DEFAULT_GAME_SETTINGS });
       setScoreInputs({});
       setSelectedPlayingMatchIds([]);
@@ -373,6 +398,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const loadedModeId = data.gameMode && GAME_MODES.some((m) => m.id === data.gameMode) ? data.gameMode! : GAME_MODES[0].id;
     setGameModeId(loadedModeId);
     const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
+    setGameModeCategoryId(loadedMode.categoryId ?? GAME_CATEGORIES[0].id);
     const baseSettings = data.gameSettings ?? { ...DEFAULT_GAME_SETTINGS };
     const rawScore = baseSettings.scoreLimit;
     const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
@@ -738,97 +764,161 @@ export function GameView({ gameId }: { gameId: string | null }) {
       <main className="flex-1 px-2 pb-24 overflow-auto">
         {navView === "setting" && (
         <div className="space-y-2 pt-4">
-        {/* 경기 방식만: 선정 후 목록에 추가 */}
+        {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
           <p className="text-sm text-slate-600 leading-snug mb-1.5">원하는 경기 방식을 경기 목록에 추가하여 경기 관리 및 배포 할 수 있습니다</p>
-          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
-            <div className="px-3 py-1.5 border-b border-[#e8e8ed]">
-              <p className="text-xs text-slate-500 mb-2">보유 경기 방식 수 : <span className="font-numeric">{GAME_MODES.length}</span> 개</p>
-              <div>
-                <button
-                  type="button"
-                  onClick={addGameToRecord}
-                  className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors"
-                >
-                  아래 경기 방식으로 경기 목록에 추가
-                </button>
-              </div>
+          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden min-w-0">
+            {/* 상단 카테고리 탭 - 줄바꿈 방지 */}
+            <div className="flex border-b border-[#e8e8ed] overflow-x-auto flex-nowrap">
+              {GAME_CATEGORIES.map((cat) => {
+                const modesInCat = GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === cat.id);
+                const isActive = gameModeCategoryId === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => {
+                      setGameModeCategoryId(cat.id);
+                      const firstInCat = modesInCat[0];
+                      if (firstInCat && !modesInCat.some((m) => m.id === gameModeId)) {
+                        setGameModeId(firstInCat.id);
+                        const defaultScore = firstInCat.defaultScoreLimit ?? 21;
+                        setGameSettings((prev) => ({ ...prev, scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore }));
+                      }
+                    }}
+                    className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
+                  >
+                    {cat.label}
+                  </button>
+                );
+              })}
             </div>
-            <div className="px-3 py-2 text-fluid-base text-[#6e6e73] space-y-1 leading-relaxed">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <label htmlFor="game-mode" className="text-fluid-base text-[#6e6e73] shrink-0 py-0.5 leading-tight">경기 방식</label>
-                <select
-                  id="game-mode"
-                  value={gameModeId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setGameModeId(nextId);
-                    const nextMode = GAME_MODES.find((m) => m.id === nextId) ?? GAME_MODES[0];
-                    const defaultScore = nextMode.defaultScoreLimit ?? 21;
-                    setGameSettings((prev) => ({
-                      ...prev,
-                      scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore,
-                    }));
-                  }}
-                  className="text-sm font-semibold text-[#1d1d1f] px-3 py-1.5 rounded-xl border-2 border-[#0071e3]/30 bg-[#f5f5f7] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                  aria-label="경기 방식 선택"
-                >
-                  {GAME_MODES.map((mode) => (
-                    <option key={mode.id} value={mode.id}>
-                      {mode.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <p className="font-medium text-slate-700 mb-0.5">경기 방식 설명</p>
-              <div className="space-y-1 text-slate-600">
-                <p className="leading-relaxed">
-                  인원에 따라 총 경기 수와 인당 경기 수가 아래 표처럼 정해져 있으며, 참가자는 모두 동일한 경기 수로 공정하게 진행합니다.
-                </p>
-                <p className="leading-relaxed">
-                  파트너와 상대를 경기마다 바꿔 가며 여러 분과 골고루 대전할 수 있습니다.
-                </p>
-              </div>
-              <p className="font-medium text-slate-700 mt-2 mb-0.5">인원수 별 총 경기수 및 소요시간</p>
-              <div className="overflow-x-auto mt-0.5">
-                <table className="w-full table-fixed border-collapse text-xs text-slate-600 leading-tight font-numeric">
-                  <colgroup>
-                    <col style={{ width: "20%" }} />
-                    <col style={{ width: "20%" }} />
-                    <col style={{ width: "20%" }} />
-                    <col style={{ width: "20%" }} />
-                    <col style={{ width: "20%" }} />
-                  </colgroup>
-                  <thead>
-                    <tr className="bg-slate-100">
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">인원</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">총 경기수</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">인당 경기수</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">소요시간</th>
-                      <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700">필요코트</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: gameMode.maxPlayers - gameMode.minPlayers + 1 }, (_, i) => gameMode.minPlayers + i).map((n) => {
-                      const total = getTargetTotalGames(n);
-                      const perPerson = total > 0 && n > 0 ? Math.round((total * 4) / n) : 0;
-                      const maxCourts = getMaxCourts(n);
-                      const totalMinutesRaw = total * MINUTES_PER_21PT_GAME;
-                      const minutesForMaxCourts = Math.ceil(totalMinutesRaw / maxCourts);
-                      const durationLabel = formatEstimatedDuration(minutesForMaxCourts);
-                      const courtLabel = maxCourts;
-                      return (
-                        <tr key={n} className="even:bg-slate-50">
-                          <td className="border border-slate-200 px-2 py-0 text-center">{n}</td>
-                          <td className="border border-slate-200 px-2 py-0 text-center">{total}</td>
-                          <td className="border border-slate-200 px-2 py-0 text-center">{perPerson}</td>
-                          <td className="border border-slate-200 px-2 py-0 text-center text-slate-600">{durationLabel}</td>
-                          <td className="border border-slate-200 px-2 py-0 text-center text-slate-600">{courtLabel}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            <div className="flex flex-row min-h-0 min-w-[280px]">
+              {/* 좌측: 해당 카테고리 경기 방식 목록 */}
+              <nav className="min-w-[4.25rem] w-[4.25rem] shrink-0 border-r border-[#e8e8ed] bg-slate-50/50">
+                <ul className="py-0">
+                  {GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId).map((mode) => {
+                    const isSelected = gameModeId === mode.id;
+                    return (
+                      <li key={mode.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGameModeId(mode.id);
+                            const defaultScore = mode.defaultScoreLimit ?? 21;
+                            setGameSettings((prev) => ({ ...prev, scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore }));
+                          }}
+                          className={`w-full text-left px-0 py-0 min-h-[1.5rem] text-sm rounded-r border-l-2 transition-colors whitespace-nowrap ${isSelected ? "border-[#0071e3] bg-[#0071e3]/10 text-[#0071e3] font-medium" : "border-transparent text-slate-700 hover:bg-slate-100/80"}`}
+                        >
+                          {mode.label}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId).length === 0 && (
+                  <p className="px-0.5 py-2 text-xs text-slate-500">이 카테고리에 등록된 경기 방식이 없습니다.</p>
+                )}
+              </nav>
+              {/* 우측: 해당 카테고리에서 선택한 경기 방식일 때만 상세 표시 */}
+              <div className="flex-1 min-w-0 px-1 py-1 text-fluid-base text-[#6e6e73] space-y-1 leading-relaxed">
+                {(gameMode.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={addGameToRecord}
+                      disabled={gameModeId === "individual_b"}
+                      className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3]"
+                    >
+                      아래 경기 방식으로 경기 목록에 추가
+                    </button>
+                    {gameModeId === "individual_b" && (
+                      <p className="text-xs text-slate-500 mb-2">개인전b는 아직 경기 목록 추가 기능을 지원하지 않습니다.</p>
+                    )}
+                    {gameModeId === "individual" ? (
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">특징</p>
+                          <div className="space-y-0.5 text-slate-600 text-sm leading-tight">
+                            <p>인원에 따라 총 경기 수와 인당 경기 수가 아래 표처럼 정해져 있으며, 참가자는 모두 동일한 경기 수로 공정하게 진행합니다.</p>
+                            <p>파트너와 상대를 경기마다 바꿔 가며 여러 분과 골고루 대전할 수 있습니다.</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">인원</p>
+                          <p className="text-slate-600 text-sm leading-tight">{gameMode.minPlayers}~{gameMode.maxPlayers}명</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">경기수·소요시간</p>
+                          <div className="overflow-x-auto mt-0.5 min-w-0">
+                            <table className="w-full min-w-[240px] table-fixed border-collapse text-xs text-slate-600 leading-tight font-numeric">
+                              <colgroup>
+                                <col style={{ width: "20%" }} />
+                                <col style={{ width: "20%" }} />
+                                <col style={{ width: "20%" }} />
+                                <col style={{ width: "20%" }} />
+                                <col style={{ width: "20%" }} />
+                              </colgroup>
+                              <thead>
+                                <tr className="bg-slate-100">
+                                  <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700 whitespace-nowrap">인원</th>
+                                  <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700 whitespace-nowrap">총</th>
+                                  <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700 whitespace-nowrap">인당</th>
+                                  <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700 whitespace-nowrap">코트</th>
+                                  <th className="border border-slate-200 px-2 py-0 text-center font-semibold text-slate-700 whitespace-nowrap">소요</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Array.from({ length: gameMode.maxPlayers - gameMode.minPlayers + 1 }, (_, i) => gameMode.minPlayers + i).map((n) => {
+                                  const total = getTargetTotalGames(n);
+                                  const perPerson = total > 0 && n > 0 ? Math.round((total * 4) / n) : 0;
+                                  const maxCourts = getMaxCourts(n);
+                                  const totalMinutesRaw = total * MINUTES_PER_21PT_GAME;
+                                  const minutesForMaxCourts = Math.ceil(totalMinutesRaw / maxCourts);
+                                  const durationLabel = formatEstimatedDuration(minutesForMaxCourts);
+                                  const courtLabel = maxCourts;
+                                  return (
+                                    <tr key={n} className="even:bg-slate-50">
+                                      <td className="border border-slate-200 px-2 py-0 text-center whitespace-nowrap">{n}</td>
+                                      <td className="border border-slate-200 px-2 py-0 text-center whitespace-nowrap">{total}</td>
+                                      <td className="border border-slate-200 px-2 py-0 text-center whitespace-nowrap">{perPerson}</td>
+                                      <td className="border border-slate-200 px-2 py-0 text-center text-slate-600 whitespace-nowrap">{courtLabel}</td>
+                                      <td className="border border-slate-200 px-2 py-0 text-center text-slate-600 whitespace-nowrap">{durationLabel}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    ) : gameModeId === "individual_b" ? (
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">특징</p>
+                          <p className="text-slate-600 text-sm leading-tight">개인전b 전용 규칙입니다. (내용 추후 입력)</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">인원</p>
+                          <p className="text-slate-500 text-sm leading-tight">추후 정의됩니다.</p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">경기수·소요시간</p>
+                          <p className="text-slate-500 text-xs leading-tight">개인전b 전용 표는 추후 정의됩니다.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#0071e3] mb-0.5 leading-tight">인원</p>
+                          <p className="text-slate-600 text-sm leading-tight">{gameMode.minPlayers}~{gameMode.maxPlayers}명</p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500 py-8 text-center">왼쪽 목록에서 경기 방식을 선택하면 상세 내용이 표시됩니다.</p>
+                )}
               </div>
             </div>
           </div>
@@ -1456,15 +1546,42 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <span className="w-8 h-6 flex items-center justify-center flex-shrink-0">
                       {isTop3 ? (
                         <span className="relative inline-flex items-center justify-center" aria-label={`${rank}위`}>
-                          <svg width="22" height="24" viewBox="0 0 24 26" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-sm">
-                            {/* 목줄 고리 */}
-                            <rect x="9" y="0.5" width="6" height="2.2" rx="1.1" fill={medalStroke} stroke={medalStroke} strokeWidth="0.5" />
-                            {/* 목줄 (고리와 메달 연결) */}
-                            <path d="M 10.5 2.7 L 11.2 4.2 L 12.8 4.2 L 13.5 2.7 L 12 3.8 Z" fill={medalStroke} opacity={0.9} />
-                            {/* 메달 원판 */}
-                            <circle cx="12" cy="13" r="9" fill={medalColor} stroke={medalStroke} strokeWidth="1.2" />
-                            <circle cx="12" cy="13" r="6" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1" />
-                            <text x="12" y="16" textAnchor="middle" fill="#fff" fontSize="10" fontWeight="bold" fontFamily="system-ui">{rank}</text>
+                          <svg width="24" height="26" viewBox="0 0 24 26" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-md">
+                            <defs>
+                              <linearGradient id={`medalGrad${rank}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor={rank === 1 ? "#FFF4B8" : rank === 2 ? "#E8ECF1" : "#E8C89C"} />
+                                <stop offset="35%" stopColor={medalColor} />
+                                <stop offset="70%" stopColor={medalStroke} />
+                                <stop offset="100%" stopColor={rank === 1 ? "#B8860B" : rank === 2 ? "#64748B" : "#783F04"} />
+                              </linearGradient>
+                              <linearGradient id={`medalShine${rank}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stopColor="rgba(255,255,255,0.65)" />
+                                <stop offset="50%" stopColor="rgba(255,255,255,0.15)" />
+                                <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+                              </linearGradient>
+                              <linearGradient id={`ringGrad${rank}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor={rank === 1 ? "#D4A017" : rank === 2 ? "#94A3B8" : "#A0522D"} />
+                                <stop offset="100%" stopColor={medalStroke} />
+                              </linearGradient>
+                              <filter id={`medalShadow${rank}`} x="-20%" y="-20%" width="140%" height="140%">
+                                <feDropShadow dx="0" dy="1" stdDeviation="0.8" floodColor="rgba(0,0,0,0.25)" />
+                              </filter>
+                            </defs>
+                            <g filter={`url(#medalShadow${rank})`}>
+                              {/* 목줄 고리 */}
+                              <rect x="9" y="0.5" width="6" height="2.5" rx="1.25" fill={`url(#ringGrad${rank})`} stroke={medalStroke} strokeWidth="0.6" />
+                              {/* 목줄 리본 */}
+                              <path d="M 10.5 3 L 11.3 4.5 L 12 4.2 L 12.7 4.5 L 13.5 3 L 12 4 Z" fill={`url(#ringGrad${rank})`} stroke={medalStroke} strokeWidth="0.4" opacity={0.95} />
+                              {/* 메달 원판 - 그라데이션 */}
+                              <circle cx="12" cy="13" r="9" fill={`url(#medalGrad${rank})`} stroke={medalStroke} strokeWidth="1.2" />
+                              {/* 메달 테두리 내부 링 */}
+                              <circle cx="12" cy="13" r="7.2" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="0.8" />
+                              <circle cx="12" cy="13" r="5.8" fill="none" stroke="rgba(0,0,0,0.12)" strokeWidth="0.4" />
+                              {/* 상단 하이라이트 (광택) */}
+                              <ellipse cx="12" cy="10.5" rx="5" ry="3" fill={`url(#medalShine${rank})`} />
+                              {/* 순위 숫자 */}
+                              <text x="12" y="16" textAnchor="middle" fill="#fff" fontSize="10" fontWeight="bold" fontFamily="system-ui" stroke="rgba(0,0,0,0.2)" strokeWidth="0.6">{rank}</text>
+                            </g>
                           </svg>
                         </span>
                       ) : (

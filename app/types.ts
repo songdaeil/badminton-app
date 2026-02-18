@@ -22,6 +22,8 @@ export interface Team {
 export interface GameMode {
   id: string;
   label: string;
+  /** 상단 카테고리 탭 분류용. 없으면 'other'로 묶음 */
+  categoryId?: string;
   minPlayers: number;
   maxPlayers: number;
   /** 해당 방식의 기본 한 경기당 득점 제한. 없으면 21 */
