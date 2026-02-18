@@ -481,6 +481,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const mainScrollRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef({ x: 0, y: 0 });
+  /** 오버레이(경기 상세·프로필 수정) 스와이프 백 제스처용 */
+  const overlayTouchStartRef = useRef({ x: 0, y: 0 });
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
   const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
   const effectiveGameId = gameId ?? selectedGameId;
@@ -1604,7 +1606,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
       {showGameModeHelp && (
         <>
           <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowGameModeHelp(false)} />
-          <div className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-xl border border-[#e8e8ed]">
+          <div
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-xl border border-[#e8e8ed]"
+            onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+            onTouchEnd={(e) => {
+              const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
+              const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
+              if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowGameModeHelp(false);
+            }}
+          >
             <p className="text-sm text-slate-700 leading-relaxed">
               각 카테고리 내에 여러 개의 경기 방식을 업데이트 중에 있습니다. 설명을 읽고 원하는 경기 방식을 선택하여 경기 목록으로 이동시킬 수 있습니다.
             </p>
@@ -1623,7 +1633,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
       {showRecordHelp && (
         <>
           <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowRecordHelp(false)} />
-          <div className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-xl border border-[#e8e8ed]">
+          <div
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-xl border border-[#e8e8ed]"
+            onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+            onTouchEnd={(e) => {
+              const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
+              const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
+              if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowRecordHelp(false);
+            }}
+          >
             <p className="text-sm text-slate-700 leading-relaxed">
               선택한 경기 방식이 경기 목록에 추가됩니다. 원하는 경기를 누르면 상세가 열려 편집할 수 있습니다. 공유 링크를 참가자에게 전달하면, 받은 사람은 경기 명단에 신청(참가자 추가)하고 경기 현황에서 경기 결과를 함께 입력할 수 있습니다.
             </p>
@@ -2052,6 +2070,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
             animation: recordDetailClosing
               ? "slideOutToLeftOverlay 0.25s cubic-bezier(0.32, 0.72, 0, 1) forwards"
               : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
+          }}
+          onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+          onTouchEnd={(e) => {
+            if (recordDetailClosing) return;
+            const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
+            const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
+            if (dx > 60 && Math.abs(dx) > Math.abs(dy)) {
+              setRecordDetailClosing(true);
+              setTimeout(() => { setSelectedGameId(null); setRecordDetailClosing(false); }, 250);
+            }
           }}
         >
         <div className="space-y-4 pb-8">
@@ -2763,6 +2791,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
               : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
           }}
           aria-modal="true"
+          onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+          onTouchEnd={(e) => {
+            if (profileEditClosing) return;
+            const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
+            const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
+            if (dx > 60 && Math.abs(dx) > Math.abs(dy)) {
+              setProfileEditClosing(true);
+              setTimeout(() => { setProfileEditOpen(false); setProfileEditClosing(false); }, 250);
+            }
+          }}
         >
           <header className="flex items-center gap-2 shrink-0 px-3 py-2.5 border-b border-[#e8e8ed] bg-white">
             <button
@@ -2975,7 +3013,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
       )}
       {showRegenerateConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-fade-in" aria-modal="true" role="alertdialog" aria-labelledby="regenerate-confirm-title">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-4 space-y-3 animate-scale-in">
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-4 space-y-3 animate-scale-in"
+            onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+            onTouchEnd={(e) => {
+              const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
+              const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
+              if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowRegenerateConfirm(false);
+            }}
+          >
             <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
               적용하면 현재 경기 명단 기준으로 경기 현황이 다시 생성됩니다. 지금까지 입력한 경기 결과·설정이 모두 변경됩니다. 계속하시겠습니까?
             </p>
