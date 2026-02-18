@@ -1212,6 +1212,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               로그인 없이 둘러보기
             </button>
+            <p className="text-center pt-4">
+              <a
+                href="/privacy.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-slate-500 underline hover:text-slate-700"
+              >
+                개인정보 처리방침
+              </a>
+            </p>
           </div>
         </div>
       </div>
