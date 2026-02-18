@@ -711,12 +711,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
   }, [authUid]);
 
-  /** 프로필 저장: 로컬 + 로그인 시 Firestore 동기화 */
-  const persistMyInfo = useCallback((info: MyInfo) => {
-    saveMyInfo(info);
+  /** 프로필을 Firestore에 업로드 (업데이트 버튼으로만 호출) */
+  const uploadProfileToFirestore = useCallback(async () => {
     const uid = getCurrentUserUid();
-    if (uid) void setRemoteProfile(uid, info);
-  }, []);
+    if (!uid) return;
+    const ok = await setRemoteProfile(uid, myInfo);
+    if (ok) {
+      setLoginMessage("프로필이 클라우드에 업로드되었습니다.");
+      setTimeout(() => setLoginMessage(null), 3000);
+    } else {
+      setLoginMessage("업로드에 실패했습니다.");
+      setTimeout(() => setLoginMessage(null), 3000);
+    }
+  }, [myInfo]);
 
   /** 이메일 인증 상태 구독: 인증 완료 시 로그인 통과 처리(유령 회원 방지) */
   useEffect(() => {
@@ -805,10 +812,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, myInfo.name, myInfo.gender, myInfo.grade, mounted]);
 
-  useEffect(() => {
-    if (!mounted) return;
-    persistMyInfo(myInfo);
-  }, [myInfo, mounted]);
 
   const addGameToRecord = useCallback(() => {
     const id = createGameId();
@@ -1294,7 +1297,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               const { phoneNumber } = await confirmPhoneCode(conf, code);
                               const nextInfo = { ...myInfo, phoneNumber };
                               setMyInfo(nextInfo);
-                              persistMyInfo(nextInfo);
+                              saveMyInfo(nextInfo);
                               if (typeof window !== "undefined") {
                                 sessionStorage.setItem(LOGIN_GATE_KEY, "1");
                                 setLoginGatePassed(true);
@@ -1357,7 +1360,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         const { email: signedEmail, needsVerification } = await signUpWithEmail(email, password);
                         const nextInfo = { ...myInfo, email: signedEmail };
                         setMyInfo(nextInfo);
-                        persistMyInfo(nextInfo);
+                        saveMyInfo(nextInfo);
                         if (!needsVerification && typeof window !== "undefined") {
                           sessionStorage.setItem(LOGIN_GATE_KEY, "1");
                           setLoginGatePassed(true);
@@ -1397,7 +1400,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         const { email: signedEmail, emailVerified } = await signInWithEmailAuth(email, password);
                         const nextInfo = { ...myInfo, email: signedEmail };
                         setMyInfo(nextInfo);
-                        persistMyInfo(nextInfo);
+                        saveMyInfo(nextInfo);
                         if (emailVerified && typeof window !== "undefined") {
                           sessionStorage.setItem(LOGIN_GATE_KEY, "1");
                           setLoginGatePassed(true);
@@ -2545,7 +2548,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, name: e.target.value };
                           setMyInfo(next);
-                          persistMyInfo(next);
+                          saveMyInfo(next);
                         }}
                         placeholder="이름"
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
@@ -2559,7 +2562,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, gender: e.target.value as "M" | "F" };
                           setMyInfo(next);
-                          persistMyInfo(next);
+                          saveMyInfo(next);
                         }}
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                         aria-label="성별"
@@ -2575,7 +2578,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, grade: e.target.value as Grade };
                           setMyInfo(next);
-                          persistMyInfo(next);
+                          saveMyInfo(next);
                         }}
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                         aria-label="급수"
@@ -2594,7 +2597,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, phoneNumber: e.target.value.trim() || undefined };
                           setMyInfo(next);
-                          persistMyInfo(next);
+                          saveMyInfo(next);
                         }}
                         placeholder="010-1234-5678"
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
@@ -2609,7 +2612,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         onChange={(e) => {
                           const next = { ...myInfo, birthDate: e.target.value || undefined };
                           setMyInfo(next);
-                          persistMyInfo(next);
+                          saveMyInfo(next);
                         }}
                         className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                         aria-label="생년월일"
@@ -2638,7 +2641,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               const dataUrl = reader.result as string;
                               const next = { ...myInfo, profileImageUrl: dataUrl };
                               setMyInfo(next);
-                              persistMyInfo(next);
+                              saveMyInfo(next);
                             };
                             reader.readAsDataURL(file);
                             e.target.value = "";
@@ -2647,6 +2650,20 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       </label>
                       <span className="text-xs text-slate-500">200KB 이하 권장</span>
                     </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <span className="shrink-0 w-28" />
+                      <button
+                        type="button"
+                        onClick={uploadProfileToFirestore}
+                        className="px-4 py-2 rounded-xl text-sm font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap"
+                      >
+                        클라우드에 업데이트
+                      </button>
+                      <span className="text-xs text-slate-500">다른 기기에서 로그인 시 이 프로필이 적용됩니다.</span>
+                    </div>
+                    {loginMessage && (
+                      <p className="text-xs text-slate-600 mt-2 px-1">{loginMessage}</p>
+                    )}
                     </div>
                   </div>
                 </div>
