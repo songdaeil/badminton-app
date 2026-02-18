@@ -1,11 +1,55 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
+import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
+import { ensureFirebase, getDb } from "@/lib/firebase";
+import { addSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
 import { getKakaoJsKey, initKakao, loginWithKakao, logoutKakao } from "@/lib/kakao";
-import type { GameSettings, MyInfo } from "@/lib/game-storage";
 import type { GameMode, Grade, Member, Match } from "./types";
+
+/** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
+function encodeGameForShare(data: GameData): string {
+  const payload = {
+    members: data.members,
+    matches: data.matches,
+    gameName: data.gameName ?? undefined,
+    gameMode: data.gameMode,
+    gameSettings: data.gameSettings ?? DEFAULT_GAME_SETTINGS,
+    myProfileMemberId: data.myProfileMemberId ?? undefined,
+    createdAt: data.createdAt ?? undefined,
+    createdBy: data.createdBy ?? undefined,
+    createdByName: data.createdByName ?? undefined,
+  };
+  const json = JSON.stringify(payload);
+  const base64 = btoa(encodeURIComponent(json));
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** 공유 링크에서 경기 데이터 복원 */
+function decodeGameFromShare(encoded: string): GameData | null {
+  try {
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const json = decodeURIComponent(atob(padded));
+    const p = JSON.parse(json) as GameData;
+    if (!p || !Array.isArray(p.members) || !Array.isArray(p.matches)) return null;
+    return {
+      members: p.members,
+      matches: p.matches,
+      gameName: p.gameName ?? undefined,
+      gameMode: p.gameMode,
+      gameSettings: p.gameSettings ?? { ...DEFAULT_GAME_SETTINGS },
+      myProfileMemberId: p.myProfileMemberId ?? undefined,
+      createdAt: typeof p.createdAt === "string" ? p.createdAt : undefined,
+      createdBy: typeof p.createdBy === "string" ? p.createdBy : undefined,
+      createdByName: typeof p.createdByName === "string" ? p.createdByName : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** 저장된 경기(score1/score2 있는 것)만으로 멤버별 승/패/득실차 재계산 → 경기 결과와 항상 일치 */
 function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): Member[] {
@@ -334,6 +378,7 @@ function AddMemberForm({
 
 export function GameView({ gameId }: { gameId: string | null }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [members, setMembers] = useState<Member[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [scoreInputs, setScoreInputs] = useState<Record<string, { s1: string; s2: string }>>({});
@@ -354,6 +399,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   /** 경기 목록 카드별 ... 메뉴 열린 카드 id */
   const [listMenuOpenId, setListMenuOpenId] = useState<string | null>(null);
+  /** 공유 링크 복사 완료 메시지 (잠깐 표시) */
+  const [shareToast, setShareToast] = useState<string | null>(null);
   /** 경기 방식 도움말 팝업 */
   const [showGameModeHelp, setShowGameModeHelp] = useState(false);
   /** 경기 목록 도움말 팝업 */
@@ -368,13 +415,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [kakaoLoginStatus, setKakaoLoginStatus] = useState<string | null>(null);
   /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  /** Firestore에서 내려온 데이터 적용 시 다음 save 시 Firestore 업로드 스킵 */
+  const skipNextFirestorePush = useRef(false);
+  /** Firestore 업로드 디바운스 (편집 시 매 입력마다 업로드하지 않도록) */
+  const firestorePushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 저장(로컬+Firestore) 디바운스용: 마지막 payload와 타이머. 편집 시 렉 방지 */
+  const saveDebounceRef = useRef<{ id: string; payload: GameData } | null>(null);
+  const saveDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const SAVE_DEBOUNCE_MS = 400;
+  /** 구독으로 원격 데이터 적용 시, 입력 중인 점수(미저장)를 덮어쓰지 않도록 최신 scoreInputs 참조 */
+  const scoreInputsRef = useRef<Record<string, { s1: string; s2: string }>>({});
+  useEffect(() => {
+    scoreInputsRef.current = scoreInputs;
+  }, [scoreInputs]);
+  /** 경기 목록에서 공유(shareId) 카드 최신 데이터 갱신 후 리스트 다시 그리기용 */
+  const [listRefreshKey, setListRefreshKey] = useState(0);
+  /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
+  const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
+  const effectiveGameId = gameId ?? selectedGameId;
+  const gameMode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
   /** 테이블 내 직접입력 행: 새 참가자 입력값 */
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberGender, setNewMemberGender] = useState<"M" | "F">("M");
   const [newMemberGrade, setNewMemberGrade] = useState<Grade>("B");
-
-  const effectiveGameId = gameId ?? selectedGameId;
-  const gameMode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
 
   useEffect(() => {
     if (effectiveGameId === null) {
@@ -394,7 +457,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const data = loadGame(effectiveGameId);
     const membersWithCorrectStats = recomputeMemberStatsFromMatches(data.members, data.matches);
     setMembers(membersWithCorrectStats);
-    setGameName(typeof data.gameName === "string" ? data.gameName : "");
+    setGameName(typeof data.gameName === "string" && data.gameName.trim() ? data.gameName.trim() : "");
     setMatches(data.matches);
     setMyProfileMemberId(
       data.myProfileMemberId ?? data.members.find((m) => m.name === "송대일")?.id ?? null
@@ -419,6 +482,164 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setHighlightMemberId(null);
     setMounted(true);
   }, [effectiveGameId]);
+
+  /** shareId가 있는 경기 열람 시 Firestore 실시간 구독 → 원격 변경 시 로컬 저장 후 state 반영 */
+  useEffect(() => {
+    if (effectiveGameId == null || typeof window === "undefined") return;
+    const data = loadGame(effectiveGameId);
+    const shareId = data.shareId;
+    if (!shareId) return;
+    let unsub: (() => void) | null = null;
+    ensureFirebase().then(() => {
+      if (!isSyncAvailable()) return;
+      unsub = subscribeSharedGame(shareId, (remote) => {
+      skipNextFirestorePush.current = true;
+      saveGame(effectiveGameId, remote);
+      const membersWithCorrectStats = recomputeMemberStatsFromMatches(remote.members, remote.matches);
+      setMembers(membersWithCorrectStats);
+      setGameName(typeof remote.gameName === "string" && remote.gameName.trim() ? remote.gameName.trim() : "");
+      setMatches(remote.matches);
+      setMyProfileMemberId(
+        remote.myProfileMemberId ?? remote.members.find((m) => m.name === "송대일")?.id ?? null
+      );
+      const loadedModeId = remote.gameMode && GAME_MODES.some((m) => m.id === remote.gameMode) ? remote.gameMode! : GAME_MODES[0].id;
+      setGameModeId(loadedModeId);
+      const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
+      setGameModeCategoryId(loadedMode.categoryId ?? GAME_CATEGORIES[0].id);
+      const baseSettings = remote.gameSettings ?? { ...DEFAULT_GAME_SETTINGS };
+      const rawScore = baseSettings.scoreLimit;
+      const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
+      const validTime = TIME_OPTIONS_30MIN.includes(baseSettings.time) ? baseSettings.time : TIME_OPTIONS_30MIN[0];
+      setGameSettings({ ...baseSettings, scoreLimit: validScore, time: validTime });
+      const currentInputs = scoreInputsRef.current;
+      const inputs: Record<string, { s1: string; s2: string }> = {};
+      for (const m of remote.matches) {
+        const fromRemote = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
+        const local = currentInputs[m.id];
+        if (local && (local.s1 !== fromRemote.s1 || local.s2 !== fromRemote.s2)) {
+          inputs[m.id] = local;
+        } else {
+          inputs[m.id] = fromRemote;
+        }
+      }
+      setScoreInputs(inputs);
+      const matchIdSet = new Set(remote.matches.map((m) => String(m.id)));
+      const validPlayingIds = (remote.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
+      setSelectedPlayingMatchIds(validPlayingIds);
+    });
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [effectiveGameId]);
+
+  /** 공유 링크(?share=...) 로 들어온 경우: 동기화 문서 있으면 Firestore에서 로드, 없으면 base64 디코드. 동일 shareId 중복 추가 방지 */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const share = searchParams.get("share");
+    if (!share) return;
+    const existingIds = loadGameList();
+    const alreadyImportedId = existingIds.find(
+      (id) => loadGame(id).shareId === share || loadGame(id).importedFromShare === share
+    );
+    if (alreadyImportedId != null) {
+      setNavView("record");
+      setSelectedGameId(null);
+      router.replace("/?view=record");
+      return;
+    }
+    // Firestore 동기화: 먼저 getSharedGame 시도(내부에서 ensureFirebase 호출). 없으면 구형 base64 링크 시도
+    getSharedGame(share).then((data) => {
+      if (data) {
+        const newId = createGameId();
+        saveGame(newId, {
+          ...data,
+          playingMatchIds: data.playingMatchIds ?? [],
+          shareId: share,
+        });
+        addGameToList(newId);
+        setNavView("record");
+        setSelectedGameId(null);
+        router.replace("/?view=record");
+        return;
+      }
+      const fallback = decodeGameFromShare(share);
+      if (!fallback) return;
+      let merged = fallback;
+      if (!merged.createdByName && merged.createdBy) {
+        const name = merged.members.find((m) => m.id === merged!.createdBy)?.name;
+        if (name) merged = { ...merged, createdByName: name };
+      }
+      const newId = createGameId();
+      saveGame(newId, {
+        ...merged,
+        createdAt: merged.createdAt ?? new Date().toISOString(),
+        createdBy: merged.createdBy ?? null,
+        createdByName: merged.createdByName ?? null,
+        playingMatchIds: [],
+        importedFromShare: share,
+      });
+      addGameToList(newId);
+      setNavView("record");
+      setSelectedGameId(null);
+      router.replace("/?view=record");
+    }).catch(() => {
+      const data = decodeGameFromShare(share);
+      if (!data) return;
+      if (!data.createdByName && data.createdBy) {
+        const name = data.members.find((m) => m.id === data.createdBy)?.name;
+        if (name) Object.assign(data, { createdByName: name });
+      }
+      const newId = createGameId();
+      saveGame(newId, {
+        ...data,
+        createdAt: data.createdAt ?? new Date().toISOString(),
+        createdBy: data.createdBy ?? null,
+        createdByName: data.createdByName ?? null,
+        playingMatchIds: [],
+        importedFromShare: share,
+      });
+      addGameToList(newId);
+      setNavView("record");
+      setSelectedGameId(null);
+      router.replace("/?view=record");
+    });
+  }, [searchParams, router, gameId]);
+
+  /** 경기 목록 탭에서 공유(shareId) 경기 카드를 Firestore 최신 데이터로 갱신 → 카드가 항상 최신으로 동기화 표시. 진입 시 1회 + 25초마다 갱신 */
+  useEffect(() => {
+    if (navView !== "record" || selectedGameId != null || typeof window === "undefined") return;
+    const refresh = () => {
+      const gameIds = loadGameList();
+      const shared = gameIds
+        .map((id) => ({ id, shareId: loadGame(id).shareId }))
+        .filter((x): x is { id: string; shareId: string } => typeof x.shareId === "string" && x.shareId.length > 0);
+      if (shared.length === 0) return;
+      let done = 0;
+      shared.forEach(({ id, shareId }) => {
+        getSharedGame(shareId).then((data) => {
+          if (data) saveGame(id, { ...data, shareId });
+          done += 1;
+          if (done === shared.length) setListRefreshKey((k) => k + 1);
+        }).catch(() => {
+          done += 1;
+          if (done === shared.length) setListRefreshKey((k) => k + 1);
+        });
+      });
+    };
+    refresh();
+    const interval = setInterval(refresh, 25000);
+    return () => clearInterval(interval);
+  }, [navView, selectedGameId]);
+
+  /** 루트(/)에서 view=record 로 들어온 경우(공유 링크 등): 경기 목록 탭 표시 후 URL 정리 */
+  useEffect(() => {
+    if (typeof window === "undefined" || gameId != null) return;
+    if (searchParams.get("view") !== "record") return;
+    setNavView("record");
+    setSelectedGameId(null);
+    router.replace("/", { scroll: false });
+  }, [gameId, searchParams, router]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -466,10 +687,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
               : m
           )
         : members;
-    saveGame(effectiveGameId, {
+    const payload: GameData = {
       members: membersToSave,
       matches,
-      gameName: gameName || undefined,
+      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: myProfileMemberId ?? undefined,
@@ -477,7 +698,56 @@ export function GameView({ gameId }: { gameId: string | null }) {
       createdBy: existing.createdBy ?? undefined,
       createdByName: existing.createdByName ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
-    });
+      importedFromShare: existing.importedFromShare ?? undefined,
+      shareId: existing.shareId ?? undefined,
+    };
+    const runSave = (id: string, data: GameData) => {
+      saveGame(id, data);
+      if (data.shareId && isSyncAvailable() && !skipNextFirestorePush.current) {
+        const wouldOverwriteWithEmpty =
+          data.members.length === 0 &&
+          data.matches.length === 0 &&
+          (existing.members.length > 0 || existing.matches.length > 0);
+        if (!wouldOverwriteWithEmpty) {
+          if (firestorePushTimeoutRef.current) clearTimeout(firestorePushTimeoutRef.current);
+          firestorePushTimeoutRef.current = setTimeout(() => {
+            firestorePushTimeoutRef.current = null;
+            const latest = loadGame(id);
+            if (latest.shareId) {
+              setSharedGame(latest.shareId, latest)
+                .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(latest)); })
+                .catch(() => {});
+            }
+          }, 1000);
+        }
+      }
+      skipNextFirestorePush.current = false;
+    };
+    saveDebounceRef.current = { id: effectiveGameId, payload };
+    if (saveDebounceTimerRef.current) clearTimeout(saveDebounceTimerRef.current);
+    saveDebounceTimerRef.current = setTimeout(() => {
+      saveDebounceTimerRef.current = null;
+      const pending = saveDebounceRef.current;
+      if (pending) {
+        runSave(pending.id, pending.payload);
+        saveDebounceRef.current = null;
+      }
+    }, SAVE_DEBOUNCE_MS);
+    return () => {
+      if (saveDebounceTimerRef.current) {
+        clearTimeout(saveDebounceTimerRef.current);
+        saveDebounceTimerRef.current = null;
+      }
+      const pending = saveDebounceRef.current;
+      if (pending && pending.id === effectiveGameId) {
+        runSave(pending.id, pending.payload);
+        saveDebounceRef.current = null;
+      }
+      if (firestorePushTimeoutRef.current) {
+        clearTimeout(firestorePushTimeoutRef.current);
+        firestorePushTimeoutRef.current = null;
+      }
+    };
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, myInfo.name, myInfo.gender, myInfo.grade, mounted]);
 
   useEffect(() => {
@@ -512,7 +782,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     saveGame(id, {
       members,
       matches,
-      gameName: gameName || undefined,
+      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: myProfileMemberId ?? undefined,
@@ -530,22 +800,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setListMenuOpenId(null);
   }, []);
 
-  /** 목록 카드에서 해당 경기 복사해 신규 생성 (복사한 시점의 나를 만든 이로 저장) */
+  /** 목록 카드에서 해당 경기 복사: 경기 명단 단계까지만 복사, 경기 현황은 제외 → 복사 후 명단 재편집·경기 생성 가능 */
   const handleCopyCard = useCallback((gameId: string) => {
     const existing = loadGame(gameId);
     const newId = createGameId();
-    const newMatches = (existing.matches ?? []).map((m) => ({
-      ...m,
-      id: createId(),
-      team1: { ...m.team1, id: createId(), players: m.team1.players },
-      team2: { ...m.team2, id: createId(), players: m.team2.players },
-      savedAt: null,
-      savedBy: null,
-      savedHistory: [],
-    }));
     saveGame(newId, {
       members: existing.members ?? [],
-      matches: newMatches,
+      matches: [],
       gameName: existing.gameName ?? undefined,
       gameMode: existing.gameMode,
       gameSettings: existing.gameSettings ?? { ...DEFAULT_GAME_SETTINGS },
@@ -559,6 +820,66 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setListMenuOpenId(null);
     setSelectedGameId(null);
   }, [myInfo.name]);
+
+  /** 경기 목록 카드에서 공유: ensureFirebase()·getDb() 호출 후 Firestore sharedGames에 addDoc(신규) 또는 setDoc(기존), shareId 링크 복사 */
+  const handleShareCard = useCallback(async (targetGameId: string) => {
+    const data = loadGame(targetGameId);
+    await ensureFirebase();
+    const db = getDb();
+    let shareParam: string;
+    let firebaseFailed = false;
+    if (db) {
+      if (data.shareId) {
+        const payload = { ...data, shareId: data.shareId };
+        const ok = await setSharedGame(data.shareId, payload);
+        shareParam = ok ? data.shareId : encodeGameForShare(data);
+        if (ok) {
+          saveGame(targetGameId, payload);
+          setLastFirestoreUploadBytes(getFirestorePayloadSize(payload));
+        } else firebaseFailed = true;
+      } else {
+        const newId = await addSharedGame(data);
+        if (newId) {
+          const toSave = { ...data, shareId: newId };
+          saveGame(targetGameId, toSave);
+          shareParam = newId;
+          setLastFirestoreUploadBytes(getFirestorePayloadSize(toSave));
+        } else {
+          shareParam = encodeGameForShare(data);
+          firebaseFailed = true;
+        }
+      }
+    } else {
+      shareParam = encodeGameForShare(data);
+      firebaseFailed = true;
+    }
+    const url = `${typeof window !== "undefined" ? window.location.origin : ""}/?share=${shareParam}`;
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(
+        () => {
+          setShareToast(
+            firebaseFailed
+              ? "공유 링크는 복사되었습니다. Firebase 업로드는 실패했습니다. 브라우저 콘솔(F12)을 확인하세요."
+              : "공유 링크가 복사되었습니다. 참가자에게 전달해 명단 신청·경기 결과 입력에 사용하세요."
+          );
+          setListMenuOpenId(null);
+          setTimeout(() => setShareToast(null), 4500);
+        },
+        () => {
+          setShareToast("복사에 실패했습니다.");
+          setTimeout(() => setShareToast(null), 2500);
+        }
+      );
+    } else {
+      setShareToast(
+        firebaseFailed
+          ? "공유 링크는 복사되었습니다. Firebase 업로드는 실패했습니다. 브라우저 콘솔(F12)을 확인하세요."
+          : "공유 링크가 복사되었습니다. 참가자에게 전달해 명단 신청·경기 결과 입력에 사용하세요."
+      );
+      setListMenuOpenId(null);
+      setTimeout(() => setShareToast(null), 4500);
+    }
+  }, []);
 
   /** 경기 방식에서 선정한 로직으로만 경기 생성. 인원 수 검사 후 generateMatchesByGameMode 단일 진입점 사용. */
   const doMatch = useCallback(() => {
@@ -813,6 +1134,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <>
           <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowRecordHelp(false)} />
           <div className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-xl border border-[#e8e8ed]">
+            <p className="text-sm text-slate-700 leading-relaxed">
+              선택한 경기 방식이 경기 목록에 추가됩니다. 원하는 경기를 누르면 상세가 열려 편집할 수 있습니다. 공유 링크를 참가자에게 전달하면, 받은 사람은 경기 명단에 신청(참가자 추가)하고 경기 현황에서 경기 결과를 함께 입력할 수 있습니다.
+            </p>
             <button
               type="button"
               onClick={() => setShowRecordHelp(false)}
@@ -989,8 +1313,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         )}
 
         {navView === "record" && !selectedGameId && (
-        /* 경기 목록: 경기 목록 */
-        <div key="record-list" className="pt-4 space-y-0.5 animate-fade-in">
+        /* 경기 목록: Firestore 동기화된 카드는 listRefreshKey 갱신 시 최신 데이터 표시 */
+        <div key={`record-list-${listRefreshKey}`} className="pt-4 space-y-0.5 animate-fade-in">
           {(() => {
             const gameIds = loadGameList();
             const sortedIds = [...gameIds].sort((a, b) => {
@@ -1008,9 +1332,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const mode = data.gameMode ? GAME_MODES.find((m) => m.id === data.gameMode) : null;
                 const modeLabel = mode?.label ?? data.gameMode ?? "경기";
                 const hasCustomName = typeof data.gameName === "string" && data.gameName.trim();
-                const perPerson = data.members.length > 0 ? Math.round((data.matches.length * 4) / data.members.length) : 0;
-                const defaultTitle = `${modeLabel} 총${data.members.length}명 총${data.matches.length}경기 인당${perPerson}경기`;
-                const titleLabel = (hasCustomName ? data.gameName!.trim() : defaultTitle).replace(/_/g, " ");
+                const titleLabel = hasCustomName ? data.gameName!.trim().replace(/_/g, " ") : "";
                 const dateStr = data.createdAt ? (() => {
                   try {
                     const d = new Date(data.createdAt!);
@@ -1026,21 +1348,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const matchIdSet = new Set(data.matches.map((m) => String(m.id)));
                 const ongoingCount = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id)).length;
                 const allDone = hasMatches && completedCount === data.matches.length;
-                /** 참가신청: 종료 0개 & 진행 0개. 경기진행: 종료 또는 진행 1개 이상(전부 종료 전). 경기종료: 전부 종료 */
+                /** 신청: 경기 0개. 생성: 경기 있음 & 종료 0 & 진행 0. 진행: 종료 또는 진행 1개 이상(전부 종료 전). 종료: 전부 종료 */
                 const currentStage =
-                  completedCount === 0 && ongoingCount === 0 ? "참가신청단계" : allDone ? "경기종료단계" : "경기진행단계";
-                const stages = ["참가신청단계", "경기진행단계", "경기종료단계"] as const;
-                /** 단계별 뱃지 하이라이트: 참가신청=초록, 경기진행=노랑, 경기종료=검정 */
+                  !hasMatches
+                    ? "신청단계"
+                    : completedCount === 0 && ongoingCount === 0
+                      ? "생성단계"
+                      : allDone
+                        ? "종료단계"
+                        : "진행단계";
+                const stages = ["신청단계", "생성단계", "진행단계", "종료단계"] as const;
+                /** 단계별 뱃지 하이라이트 */
                 const stageHighlight: Record<(typeof stages)[number], string> = {
-                  참가신청단계: "bg-green-100 text-green-700 border border-green-200",
-                  경기진행단계: "bg-amber-100 text-amber-700 border border-amber-200",
-                  경기종료단계: "bg-slate-800 text-white border border-slate-700",
+                  신청단계: "bg-green-100 text-green-700 border border-green-200",
+                  생성단계: "bg-blue-100 text-blue-700 border border-blue-200",
+                  진행단계: "bg-amber-100 text-amber-700 border border-amber-200",
+                  종료단계: "bg-slate-800 text-white border border-slate-700",
                 };
                 /** 테이블 헤더도 현재 단계와 동일 색채로 매칭 */
                 const tableHeaderByStage: Record<(typeof stages)[number], string> = {
-                  참가신청단계: "bg-green-100 text-green-700",
-                  경기진행단계: "bg-amber-100 text-amber-700",
-                  경기종료단계: "bg-slate-800 text-white",
+                  신청단계: "bg-green-100 text-green-700",
+                  생성단계: "bg-blue-100 text-blue-700",
+                  진행단계: "bg-amber-100 text-amber-700",
+                  종료단계: "bg-slate-800 text-white",
                 };
                 const stageMuted = "bg-slate-50 text-slate-400";
                 const tableHeaderClass = tableHeaderByStage[currentStage];
@@ -1063,21 +1393,55 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       onClick={() => { setListMenuOpenId(null); setSelectedGameId(id); }}
                       className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors btn-tap"
                     >
-                      {/* 1행: 경기 이름 한 줄 */}
-                      <p className="font-semibold text-slate-800 truncate text-sm leading-tight font-numeric" title={titleLabel}>{titleLabel}</p>
-                      {/* 가상의 세로선 기준: 좌측=만든이·날짜·경기방식, 우측=뱃지·테이블(여백 없이 붙임) */}
-                      <div className="flex items-start gap-0.5 mt-0">
-                        <div className="min-w-0 shrink-0 space-y-px">
+                      {/* 1행: 경기 이름 (공간 확보, 비어 있으면 빈 줄 유지) */}
+                      <p className="font-semibold text-slate-800 truncate text-sm leading-tight font-numeric min-h-[1.25rem]" title={titleLabel}>{titleLabel || "\u00A0"}</p>
+                      {/* 경기 요약 축약: 방식·인원·언제·어디·승점 + 만든이, 그 하단에 뱃지·테이블 */}
+                      <div className="mt-0 space-y-px w-full block">
+                        <p className="text-fluid-sm text-slate-500 leading-tight">경기 방식: {modeLabel}</p>
+                          <p className="text-fluid-sm text-slate-500 leading-tight font-numeric">
+                            경기 인원: 현재 {data.members.length}명 기준
+                            {mode && data.members.length >= mode.minPlayers && data.members.length <= mode.maxPlayers ? (
+                              (() => {
+                                const targetTotal = getTargetTotalGames(data.members.length);
+                                const perPerson = targetTotal > 0 ? Math.round((targetTotal * 4) / data.members.length) : "-";
+                                return <> 총 {targetTotal}경기 · 인당 {perPerson}경기</>;
+                              })()
+                            ) : (
+                              <> 총 -경기 · 인당 -경기</>
+                            )}
+                          </p>
+                          {(() => {
+                            const gs = data.gameSettings;
+                            const date = gs?.date?.trim();
+                            const time = gs?.time?.trim();
+                            const loc = gs?.location?.trim();
+                            const score = typeof gs?.scoreLimit === "number" && gs.scoreLimit >= 1 ? gs.scoreLimit : null;
+                            const parts: string[] = [];
+                            if (date) {
+                              try {
+                                const [y, m, d] = date.split("-");
+                                if (m && d) parts.push(`${parseInt(m, 10)}/${parseInt(d, 10)}`);
+                              } catch {
+                                parts.push(date);
+                              }
+                            }
+                            if (time) parts.push(time);
+                            if (loc) parts.push(loc.length > 8 ? `${loc.slice(0, 8)}…` : loc);
+                            if (score) parts.push(`${score}점제`);
+                            if (parts.length > 0) {
+                              return (
+                                <p className="text-fluid-sm text-slate-500 leading-tight">
+                                  경기 언제·어디·승점: {parts.join(" · ")}
+                                </p>
+                              );
+                            }
+                            return null;
+                          })()}
                           <p className="text-fluid-sm text-slate-500 leading-tight">
                             만든 이: {creatorDisplay}{dateStr ? ` ${dateStr}` : ""}
                           </p>
-                          <p className="text-fluid-sm text-slate-500 leading-tight font-numeric">
-                            {data.members.length}명 · {data.matches.length}경기
-                            {data.members.length > 0 && ` · 인당 ${Math.round((data.matches.length * 4) / data.members.length)}경기`}
-                          </p>
-                          <p className="text-fluid-sm text-slate-500 leading-tight">경기 방식: {modeLabel}</p>
-                        </div>
-                        <div className="shrink-0 flex flex-col gap-0.5">
+                        {/* 신청·생성·진행·종료 뱃지 + 총/종료/진행/대기 테이블 (경기 요약 하단, 전체 너비) */}
+                        <div className="w-full flex flex-col gap-0.5 pt-1">
                           <div className="flex items-center gap-1 flex-wrap">
                             {stages.map((s) => (
                               <span
@@ -1089,19 +1453,25 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             ))}
                           </div>
                           {total > 0 && (
-                            <table className="w-max text-xs border border-slate-200 rounded overflow-hidden font-numeric">
+                            <table className="w-full max-w-[200px] text-xs border border-slate-200 rounded overflow-hidden font-numeric table-fixed border-collapse">
                               <tbody>
                                 <tr className={tableHeaderClass}>
-                                  <th className="py-0 pl-1 pr-0.5 text-left font-medium leading-none">총경기수</th>
-                                  <th className={`py-0 pl-1 pr-0.5 text-left font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>종료수</th>
-                                  <th className={`py-0 pl-1 pr-0.5 text-left font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>진행수</th>
-                                  <th className={`py-0 pl-1 pr-0.5 text-left font-medium border-l leading-none ${currentStage === "경기종료단계" ? "border-slate-600" : "border-slate-200"}`}>대기수</th>
+                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "종료단계" ? "border-slate-600" : "border-slate-200"}`}>총</th>
+                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "종료단계" ? "border-slate-600" : "border-slate-200"}`}>종료</th>
+                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "종료단계" ? "border-slate-600" : "border-slate-200"}`}>진행</th>
+                                  <th className="py-0 px-1 text-center font-medium leading-none w-1/4">대기</th>
                                 </tr>
                                 <tr className="border-t border-[#e8e8ed] bg-white text-slate-700">
-                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium leading-none">{total} <span className="text-slate-500 font-normal">({pct(total)}%)</span></td>
-                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium border-l border-slate-100 leading-none">{completedCount} <span className="text-slate-500 font-normal">({pct(completedCount)}%)</span></td>
-                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium border-l border-slate-100 leading-none">{ongoingCount} <span className="text-slate-500 font-normal">({pct(ongoingCount)}%)</span></td>
-                                  <td className="py-0 pl-1 pr-0.5 text-left font-medium border-l border-slate-100 leading-none">{waitingCount} <span className="text-slate-500 font-normal">({pct(waitingCount)}%)</span></td>
+                                  <td className="py-0 px-1 text-center font-medium leading-none border-r border-slate-200">{total}</td>
+                                  <td className="py-0 px-1 text-center font-medium border-r border-slate-200 leading-none">{completedCount}</td>
+                                  <td className="py-0 px-1 text-center font-medium border-r border-slate-200 leading-none">{ongoingCount}</td>
+                                  <td className="py-0 px-1 text-center font-medium leading-none">{waitingCount}</td>
+                                </tr>
+                                <tr className="bg-white text-slate-700">
+                                  <td className="py-0 px-1 text-center text-slate-500 font-normal leading-none border-r border-slate-200">{pct(total)}%</td>
+                                  <td className="py-0 px-1 text-center text-slate-500 font-normal border-r border-slate-200 leading-none">{pct(completedCount)}%</td>
+                                  <td className="py-0 px-1 text-center text-slate-500 font-normal border-r border-slate-200 leading-none">{pct(ongoingCount)}%</td>
+                                  <td className="py-0 px-1 text-center text-slate-500 font-normal leading-none">{pct(waitingCount)}%</td>
                                 </tr>
                               </tbody>
                             </table>
@@ -1134,9 +1504,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleCopyCard(id); }}
-                              className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg btn-tap"
+                              className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 btn-tap"
                             >
                               복사
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleShareCard(id); }}
+                              className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg btn-tap"
+                            >
+                              공유
                             </button>
                           </div>
                         </>
@@ -1154,7 +1531,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {navView === "record" && selectedGameId && (
         <div key="record-detail" className="animate-fade-in">
         <div className="space-y-4 pt-4">
-        {/* 선택한 경기: 경기 설정·명단·대진·현황·랭킹 */}
+        {/* 선택한 경기: 경기 요약·명단·대진·현황·랭킹 */}
           <div className="flex items-center justify-between gap-2 pb-2">
             <button
               type="button"
@@ -1163,14 +1540,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               ← 목록으로
             </button>
+            {lastFirestoreUploadBytes != null && loadGame(effectiveGameId ?? null).shareId && (
+              <span className="text-xs text-slate-500 font-numeric" title="방금 Firestore에 업로드한 용량">
+                마지막 업로드: {lastFirestoreUploadBytes < 1024 ? `${lastFirestoreUploadBytes} B` : `${(lastFirestoreUploadBytes / 1024).toFixed(2)} KB`}
+              </span>
+            )}
           </div>
-          {/* 경기 설정 카드 */}
+          {/* 경기 요약 카드 */}
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2">
-            <div className="px-4 py-1 border-b border-[#e8e8ed]">
-              <h3 className="text-base font-semibold text-slate-800 leading-tight">경기 설정</h3>
+            <div className="px-4 py-0.5 border-b border-[#e8e8ed]">
+              <h3 className="text-base font-semibold text-slate-800 leading-tight">경기 요약</h3>
             </div>
-            <div className="px-4 py-1 space-y-0.5">
-              <div className="flex items-center gap-0.5">
+            <div className="px-4 py-0.5 space-y-px">
+              <div className="flex items-center gap-0.5 py-0.5">
                 <label htmlFor="game-name" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 이름</label>
                 <input
                   id="game-name"
@@ -1178,30 +1560,41 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   value={gameName}
                   onChange={(e) => setGameName(e.target.value)}
                   placeholder="경기 이름 입력"
-                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="경기 이름"
                 />
               </div>
-              <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5 py-0.5">
                 <span className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 방식</span>
-                <span className="flex-1 text-sm font-semibold text-[#0071e3] bg-[#0071e3]/10 px-2 py-1 rounded-lg border border-[#0071e3]/20">
+                <span className="flex-1 text-sm font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 cursor-default select-none" title="경기 방식에서 선택한 값 (변경 불가)">
                   {gameMode.label}
                 </span>
               </div>
-              <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5 py-0.5">
+                <span className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 인원</span>
+                <span className="flex-1 text-sm font-medium text-slate-500 font-numeric bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 cursor-default select-none inline-block" title="경기 명단 인원 기준 (변경 불가)">
+                  현재 {members.length}명 기준
+                  {members.length >= gameMode.minPlayers && members.length <= gameMode.maxPlayers ? (
+                    <> 총 {getTargetTotalGames(members.length)}경기 · 인당 {getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</>
+                  ) : (
+                    <> 총 -경기 · 인당 -경기</>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-0.5 py-0.5">
                 <label htmlFor="game-date" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 언제</label>
                 <input
                   id="game-date"
                   type="date"
                   value={gameSettings.date}
                   onChange={(e) => setGameSettings((s) => ({ ...s, date: e.target.value }))}
-                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
+                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
                   aria-label="날짜"
                 />
                 <select
                   value={TIME_OPTIONS_30MIN.includes(gameSettings.time) ? gameSettings.time : TIME_OPTIONS_30MIN[0]}
                   onChange={(e) => setGameSettings((s) => ({ ...s, time: e.target.value }))}
-                  className="w-24 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
+                  className="w-24 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
                   aria-label="시작 시간 (30분 단위)"
                 >
                   {TIME_OPTIONS_30MIN.map((t) => (
@@ -1211,7 +1604,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   ))}
                 </select>
               </div>
-              <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5 py-0.5">
                 <label htmlFor="game-location" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 어디</label>
                 <input
                   id="game-location"
@@ -1219,11 +1612,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   value={gameSettings.location}
                   onChange={(e) => setGameSettings((s) => ({ ...s, location: e.target.value }))}
                   placeholder="장소 입력"
-                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="장소"
                 />
               </div>
-              <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5 py-0.5">
                 <label htmlFor="game-score-limit" className="text-xs font-medium text-slate-600 shrink-0 w-16">경기 승점</label>
                 <input
                   id="game-score-limit"
@@ -1241,7 +1634,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setGameSettings((s) => ({ ...s, scoreLimit: num }));
                   }}
                   placeholder="21"
-                  className="flex-1 min-w-0 w-20 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="flex-1 min-w-0 w-20 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   aria-label="한 경기당 득점 제한 (직접 입력)"
                 />
                 <span className="text-xs text-slate-500 shrink-0">점</span>
@@ -1339,13 +1732,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         type="button"
                         onClick={() => {
                           const trimmed = newMemberName.trim();
-                          if (!trimmed) return;
-                          if (members.length >= gameMode.maxPlayers) return;
+                          if (!trimmed) {
+                            alert("이름을 입력해 주세요.");
+                            return;
+                          }
+                          if (members.length >= gameMode.maxPlayers) {
+                            alert(`경기 인원은 최대 ${gameMode.maxPlayers}명까지입니다.`);
+                            return;
+                          }
                           addMember(trimmed, newMemberGender, newMemberGrade);
                           setNewMemberName("");
                         }}
-                        disabled={members.length >= gameMode.maxPlayers}
-                        className="h-6 min-w-[2.25rem] px-2 rounded text-xs font-medium text-white whitespace-nowrap hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed bg-[#0071e3] box-border"
+                        className="h-6 min-w-[2.25rem] px-2 rounded text-xs font-medium text-white whitespace-nowrap hover:opacity-90 bg-[#0071e3] box-border"
                       >
                         추가
                       </button>
@@ -1363,14 +1761,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  if (members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers) {
+                    alert(`경기 인원은 ${gameMode.minPlayers}~${gameMode.maxPlayers}명이어야 합니다.`);
+                    return;
+                  }
                   if (matches.length > 0) {
                     setShowRegenerateConfirm(true);
                     return;
                   }
                   doMatch();
                 }}
-                disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers}
-                className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
               >
                 경기 생성
               </button>
@@ -1390,17 +1791,25 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div className="px-2 py-1.5 border-b border-[#e8e8ed]">
                 <h3 className="text-base font-semibold text-slate-800">경기 현황</h3>
                 {(() => {
+                  const ids = new Set<string>();
+                  matches.forEach((m) => {
+                    ids.add(m.team1.players[0].id);
+                    ids.add(m.team1.players[1].id);
+                    ids.add(m.team2.players[0].id);
+                    ids.add(m.team2.players[1].id);
+                  });
+                  const memberCount = ids.size;
                   const perPerson =
-                    members.length > 0 ? Math.round((matches.length * 4) / members.length) : 0;
+                    memberCount > 0 ? Math.round((matches.length * 4) / memberCount) : 0;
                   return (
                     <p className="text-xs text-slate-500 mt-0.5">
-                      오늘의 매치 · 총 <span className="font-numeric">{matches.length}</span>경기 · 인당 <span className="font-medium text-slate-700 font-numeric">{perPerson}</span>경기 (동일)
+                      현재 <span className="font-numeric">{memberCount}</span>명 기준 · 총 <span className="font-numeric">{matches.length}</span>경기 · 인당 <span className="font-medium text-slate-700 font-numeric">{perPerson}</span>경기 (동일)
                     </p>
                   );
                 })()}
               </div>
               <div className="px-2 py-1 border-b border-[#e8e8ed]">
-                {/* 총경기수 / 종료수 / 진행수 / 대기수 테이블 */}
+                {/* 총 / 종료 / 진행 / 대기 테이블 */}
                 {(() => {
                   const total = matches.length;
                   const completedCount = matches.filter((m) => m.score1 != null && m.score2 != null).length;
@@ -1408,19 +1817,25 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   const waitingCount = total - completedCount - ongoingCount;
                   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
                   return (
-                    <table className="w-max max-w-full text-sm border border-slate-200 rounded overflow-hidden font-numeric">
+                    <table className="w-full text-sm border border-slate-200 rounded overflow-hidden font-numeric table-fixed border-collapse">
                       <tbody className="bg-white text-slate-700">
                         <tr className="bg-slate-100 text-slate-600">
-                          <th className="py-0.5 px-1 text-center font-medium">총경기수</th>
-                          <th className="py-0.5 px-1 text-center font-medium border-l border-slate-200">종료수</th>
-                          <th className="py-0.5 px-1 text-center font-medium border-l border-slate-200">진행수</th>
-                          <th className="py-0.5 px-1 text-center font-medium border-l border-slate-200">대기수</th>
+                          <th className="py-0.5 px-1 text-center font-medium w-1/4 border-r border-slate-200">총</th>
+                          <th className="py-0.5 px-1 text-center font-medium w-1/4 border-r border-slate-200">종료</th>
+                          <th className="py-0.5 px-1 text-center font-medium w-1/4 border-r border-slate-200">진행</th>
+                          <th className="py-0.5 px-1 text-center font-medium w-1/4">대기</th>
                         </tr>
-                        <tr className="border-t border-[#e8e8ed]">
-                          <td className="py-0.5 px-1 text-center font-medium">{total} <span className="text-slate-500 font-normal">({pct(total)}%)</span></td>
-                          <td className="py-0.5 px-1 text-center font-medium border-l border-slate-100">{completedCount} <span className="text-slate-500 font-normal">({pct(completedCount)}%)</span></td>
-                          <td className="py-0.5 px-1 text-center font-medium border-l border-slate-100">{ongoingCount} <span className="text-slate-500 font-normal">({pct(ongoingCount)}%)</span></td>
-                          <td className="py-0.5 px-1 text-center font-medium border-l border-slate-100">{waitingCount} <span className="text-slate-500 font-normal">({pct(waitingCount)}%)</span></td>
+                        <tr className="border-t border-slate-200">
+                          <td className="py-0.5 px-1 text-center font-medium border-r border-slate-200">{total}</td>
+                          <td className="py-0.5 px-1 text-center font-medium border-r border-slate-200">{completedCount}</td>
+                          <td className="py-0.5 px-1 text-center font-medium border-r border-slate-200">{ongoingCount}</td>
+                          <td className="py-0.5 px-1 text-center font-medium">{waitingCount}</td>
+                        </tr>
+                        <tr className="border-t border-slate-200">
+                          <td className="py-0.5 px-1 text-center text-slate-500 font-normal border-r border-slate-200">{pct(total)}%</td>
+                          <td className="py-0.5 px-1 text-center text-slate-500 font-normal border-r border-slate-200">{pct(completedCount)}%</td>
+                          <td className="py-0.5 px-1 text-center text-slate-500 font-normal border-r border-slate-200">{pct(ongoingCount)}%</td>
+                          <td className="py-0.5 px-1 text-center text-slate-500 font-normal">{pct(waitingCount)}%</td>
                         </tr>
                       </tbody>
                     </table>
@@ -1476,11 +1891,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       type="button"
                       onClick={() => canSelect && togglePlayingMatch(m.id)}
                       title={canSelect ? (isCurrent ? "진행 해제" : "진행으로 선택") : undefined}
-                      className={`shrink-0 min-w-[1.75rem] w-7 py-0.5 rounded text-xs font-medium flex flex-col items-center justify-center leading-none ${statusColor} ${canSelect ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
+                      className={`shrink-0 min-w-[2rem] px-1 py-0.5 rounded text-xs font-medium flex flex-row items-center justify-center gap-0 leading-none ${statusColor} ${canSelect ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}
                     >
-                      {statusLabel.split("").map((c, i) => (
-                        <span key={i}>{c}</span>
-                      ))}
+                      {statusLabel}
                     </button>
                     <div className="min-w-0 flex-1 flex flex-col justify-center text-left max-w-[5.5rem] gap-0 overflow-hidden">
                       {m.team1.players.map((p) => {
@@ -1554,10 +1967,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <button
                       type="button"
                       onClick={() => saveResult(m.id)}
-                      className="shrink-0 min-w-[1.75rem] w-7 py-1 rounded text-xs font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-col items-center justify-center"
+                      className="shrink-0 min-w-[2rem] px-1 py-1 rounded text-xs font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center"
                     >
-                      <span>저</span>
-                      <span>장</span>
+                      저장
                     </button>
                     </div>
                     {hasInfoLine && (
@@ -1871,11 +2283,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
       </nav>
 
       {/* 경기 생성 전 확인 모달 */}
+      {shareToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm shadow-lg" role="status">
+          {shareToast}
+        </div>
+      )}
       {showRegenerateConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" aria-modal="true" role="alertdialog" aria-labelledby="regenerate-confirm-title">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-4 space-y-3">
             <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
-              이미 경기 현황에 경기가 있습니다. 경기를 다시 생성하면 현재까지의 경기 결과가 모두 사라집니다. 계속하시겠습니까?
+              적용하면 현재 경기 명단 기준으로 경기 현황이 다시 생성됩니다. 지금까지 입력한 경기 결과·설정이 모두 변경됩니다. 계속하시겠습니까?
             </p>
             <div className="flex gap-2 justify-end">
               <button

@@ -86,6 +86,10 @@ export interface GameData {
   createdByName?: string | null;
   /** 진행으로 체크된 매치 id 목록 (목록 나갔다 와도 유지) */
   playingMatchIds?: string[] | null;
+  /** 이 경기를 불러올 때 사용한 공유 쿼리(?share=xxx). 동일 링크 재진입 시 중복 추가 방지용 */
+  importedFromShare?: string | null;
+  /** 실시간 동기화용 Firestore 문서 id. 있으면 이 경기는 공유 문서와 동기화됨 */
+  shareId?: string | null;
 }
 
 const GAME_LIST_KEY = "badminton-game-list";
@@ -162,6 +166,8 @@ export function loadGame(gameId: string | null): GameData {
           createdBy: typeof parsed.createdBy === "string" ? parsed.createdBy : undefined,
           createdByName: typeof parsed.createdByName === "string" ? parsed.createdByName : undefined,
           playingMatchIds: Array.isArray(parsed.playingMatchIds) && parsed.playingMatchIds.every((x) => typeof x === "string") ? parsed.playingMatchIds : undefined,
+          importedFromShare: typeof parsed.importedFromShare === "string" ? parsed.importedFromShare : undefined,
+          shareId: typeof parsed.shareId === "string" ? parsed.shareId : undefined,
         };
       }
     }
@@ -197,6 +203,8 @@ export function saveGame(gameId: string | null, data: GameData): void {
       createdBy: data.createdBy ?? null,
       createdByName: data.createdByName ?? null,
       playingMatchIds: data.playingMatchIds ?? null,
+      importedFromShare: data.importedFromShare ?? null,
+      shareId: data.shareId ?? null,
     })
   );
 }

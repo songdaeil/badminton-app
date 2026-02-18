@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 경기 공유 실시간 동기화: shareId를 아는 사람만 링크로 접근 (공개 읽기/쓰기)
+    match /sharedGames/{shareId} {
+      allow read, write: if true;
+    }
+  }
+}
