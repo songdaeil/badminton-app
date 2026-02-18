@@ -1,4 +1,3 @@
-import type { Grade } from "@/app/types";
 import type { Member, Match } from "@/app/types";
 
 const LOCAL_KEY = "badminton-local";
@@ -22,23 +21,25 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   scoreLimit: 21,
 };
 
-/** 앱 기준 나의 정보 (로그인 + 이름·성별·급수) - 경기별이 아닌 기기 로컬 저장 */
+/** 앱 기준 나의 정보 (로그인 + 프로필) - 경기별이 아닌 기기 로컬 저장 */
 export interface MyInfo {
   name: string;
   /** M | F */
   gender: "M" | "F";
-  /** A | B | C | D */
-  grade: Grade;
-  /** 카카오 프로필 이미지 URL (로그인 시) */
+  /** 급수 A|B|C|D */
+  grade?: "A" | "B" | "C" | "D";
+  /** 프로필 이미지 URL (직접 입력 또는 업로드 후 URL) */
   profileImageUrl?: string;
-  /** 카카오 이메일 (로그인 시, 표시용) */
+  /** 이메일 로그인 시 표시용 */
   email?: string;
-  /** 전화번호 로그인 시 Firebase Auth에서 확인한 번호 (E.164, 표시용) */
+  /** 전화번호 (로그인 시 자동 채움, 프로필에서 수정 가능) */
   phoneNumber?: string;
+  /** 생년월일 YYYY-MM-DD */
+  birthDate?: string;
 }
 
 const MYINFO_KEY = "badminton-myinfo";
-export const DEFAULT_MYINFO: MyInfo = { name: "", gender: "M", grade: "B" };
+export const DEFAULT_MYINFO: MyInfo = { name: "", gender: "M", grade: "D" };
 
 export function loadMyInfo(): MyInfo {
   if (typeof window === "undefined") return { ...DEFAULT_MYINFO };
@@ -48,7 +49,7 @@ export function loadMyInfo(): MyInfo {
       const p = JSON.parse(raw) as Record<string, unknown>;
       const name = typeof p.name === "string" ? p.name : "";
       const gender = p.gender === "F" ? "F" : "M";
-      const grade = ["A", "B", "C", "D"].includes(p.grade as string) ? (p.grade as Grade) : "B";
+      const grade = p.grade === "A" || p.grade === "B" || p.grade === "C" ? p.grade : "D";
       return {
         name,
         gender,
@@ -56,6 +57,7 @@ export function loadMyInfo(): MyInfo {
         profileImageUrl: typeof p.profileImageUrl === "string" ? p.profileImageUrl : undefined,
         email: typeof p.email === "string" ? p.email : undefined,
         phoneNumber: typeof p.phoneNumber === "string" ? p.phoneNumber : undefined,
+        birthDate: typeof p.birthDate === "string" ? p.birthDate : undefined,
       };
     }
   } catch {}
@@ -64,10 +66,12 @@ export function loadMyInfo(): MyInfo {
 
 export function saveMyInfo(info: MyInfo): void {
   if (typeof window === "undefined") return;
-  const payload: Record<string, string> = { name: info.name, gender: info.gender, grade: info.grade };
+  const payload: Record<string, string> = { name: info.name, gender: info.gender };
+  if (info.grade) payload.grade = info.grade;
   if (info.profileImageUrl) payload.profileImageUrl = info.profileImageUrl;
   if (info.email) payload.email = info.email;
   if (info.phoneNumber) payload.phoneNumber = info.phoneNumber;
+  if (info.birthDate) payload.birthDate = info.birthDate;
   localStorage.setItem(MYINFO_KEY, JSON.stringify(payload));
 }
 

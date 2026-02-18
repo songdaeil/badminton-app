@@ -78,11 +78,13 @@ service cloud.firestore {
 
 ---
 
-## 5. 전화번호 로그인 설정 (Authentication)
+## 5. 로그인 방법 설정 (Authentication)
 
 1. 왼쪽 메뉴 **빌드** → **Authentication** 클릭
 2. **시작하기** 클릭(처음이면)
-3. **Sign-in method** 탭 → **전화번호** 행 클릭 → **사용 설정** 켜기 → **저장**
+3. **Sign-in method** 탭에서 사용할 방법 **사용 설정**:
+   - **이메일/비밀번호**: 클릭 → **사용 설정** 켜기 → **저장** (Blaze 요금제 불필요. 가입 시 인증 메일 발송, 인증 완료 후만 활동 가능해 유령 회원 방지)
+   - **전화번호**: 클릭 → **사용 설정** 켜기 → **저장** (Blaze 요금제 필요)
 
 ### 5-1. 승인된 도메인 추가 (auth/configuration-not-found 방지)
 

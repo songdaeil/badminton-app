@@ -7,6 +7,16 @@ import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
 import { ensureFirebase, getDb } from "@/lib/firebase";
 import { addSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
 import {
+  getCurrentEmailUser,
+  isEmailAuthAvailable,
+  sendVerificationEmailAgain,
+  signInWithEmail as signInWithEmailAuth,
+  signOutEmail,
+  signUpWithEmail,
+  subscribeEmailAuthState,
+} from "@/lib/email-auth";
+import type { AuthUserSnapshot } from "@/lib/email-auth";
+import {
   confirmPhoneCode,
   getCurrentPhoneUser,
   isPhoneAuthAvailable,
@@ -408,6 +418,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [phoneCodeInput, setPhoneCodeInput] = useState("");
   const [phoneError, setPhoneError] = useState("");
   const phoneConfirmationResultRef = useRef<ConfirmationResult | null>(null);
+  /** 이메일 로그인: 입력값, 에러, 진행 중 */
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [emailLoading, setEmailLoading] = useState(false);
+  /** 이메일 인증 대기: Firebase Auth 이메일 사용자(미인증 시 활동 불가) */
+  const [authEmailUser, setAuthEmailUser] = useState<AuthUserSnapshot>(null);
   /** 하단 네비로 이동하는 화면: setting(경기 세팅) | record(경기 목록) | myinfo(나의 정보) */
   const [navView, setNavView] = useState<"setting" | "record" | "myinfo">("setting");
   /** 경기 목록에서 선택한 경기 id (목록에서 하나 고르면 이 경기 로드) */
@@ -670,6 +687,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setMyInfo(info);
   }, []);
 
+  /** 이메일 인증 상태 구독: 인증 완료 시 로그인 통과 처리(유령 회원 방지) */
+  useEffect(() => {
+    if (!isEmailAuthAvailable()) return;
+    const unsubscribe = subscribeEmailAuthState((user) => {
+      setAuthEmailUser(user);
+      if (user?.emailVerified && typeof window !== "undefined") {
+        sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+        setLoginGatePassed(true);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
   useEffect(() => {
     if (!mounted || effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
@@ -677,7 +707,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       myProfileMemberId != null
         ? members.map((m) =>
             m.id === myProfileMemberId
-              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade }
+              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
               : m
           )
         : members;
@@ -1063,6 +1093,65 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }
 
   if (!loginGatePassed) {
+    /** 이메일로 가입/로그인했으나 아직 미인증 → 인증 메일에서 링크를 눌러야 활동 가능 */
+    if (authEmailUser && !authEmailUser.emailVerified) {
+      return (
+        <div className="min-h-screen min-h-[100dvh] bg-[#f5f5f7] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
+          <div className="w-full max-w-sm flex flex-col items-center gap-6">
+            <div className="text-center space-y-2">
+              <h1 className="text-xl font-bold text-[#1d1d1f] tracking-tight">이메일 인증이 필요합니다</h1>
+              <p className="text-sm text-slate-600">
+                <span className="font-medium text-slate-700">{authEmailUser.email}</span> 주소로 인증 메일을 보냈습니다.
+              </p>
+              <p className="text-sm text-slate-500">
+                메일에서 링크를 눌러 인증을 완료해 주세요. (스팸함도 확인해 주세요.)
+              </p>
+            </div>
+            <div className="w-full space-y-2">
+              <button
+                type="button"
+                disabled={emailLoading}
+                onClick={async () => {
+                  setEmailError("");
+                  setEmailLoading(true);
+                  try {
+                    await ensureFirebase();
+                    await sendVerificationEmailAgain();
+                    setEmailError("");
+                    setLoginMessage("인증 메일을 다시 보냈습니다.");
+                    setTimeout(() => setLoginMessage(null), 4000);
+                  } catch (e) {
+                    setEmailError(e instanceof Error ? e.message : "인증 메일 전송에 실패했습니다.");
+                  } finally {
+                    setEmailLoading(false);
+                  }
+                }}
+                className="w-full py-3 rounded-xl text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] disabled:opacity-50 transition-colors btn-tap"
+              >
+                인증 메일 다시 보내기
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await signOutEmail();
+                  setMyInfo((prev) => ({ ...prev, email: undefined }));
+                  setAuthEmailUser(null);
+                }}
+                className="w-full py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
+              >
+                로그아웃
+              </button>
+              {emailError && <p className="text-xs text-amber-600" role="alert">{emailError}</p>}
+              {loginMessage && <p className="text-xs text-slate-600">{loginMessage}</p>}
+            </div>
+            <p className="text-center pt-2">
+              <a href="/privacy.html" target="_blank" rel="noopener noreferrer" className="text-xs text-slate-500 underline hover:text-slate-700">개인정보 처리방침</a>
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen min-h-[100dvh] bg-[#f5f5f7] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-sm flex flex-col items-center gap-8">
@@ -1198,6 +1287,114 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     </p>
                   )}
                 </div>
+            )}
+
+            {/* 이메일 로그인 */}
+            {isEmailAuthAvailable() && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-600 font-medium">이메일로 로그인</p>
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) => { setEmailInput(e.target.value); setEmailError(""); }}
+                  placeholder="이메일"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  aria-label="이메일"
+                  autoComplete="email"
+                />
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => { setPasswordInput(e.target.value); setEmailError(""); }}
+                  placeholder="비밀번호"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  aria-label="비밀번호"
+                  autoComplete="current-password"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={emailLoading || !emailInput.trim() || !passwordInput}
+                    onClick={async () => {
+                      const email = emailInput.trim();
+                      const password = passwordInput;
+                      if (!email || !password) return;
+                      setEmailError("");
+                      setEmailLoading(true);
+                      try {
+                        await ensureFirebase();
+                        const { email: signedEmail, needsVerification } = await signUpWithEmail(email, password);
+                        const nextInfo = { ...myInfo, email: signedEmail };
+                        setMyInfo(nextInfo);
+                        saveMyInfo(nextInfo);
+                        if (!needsVerification && typeof window !== "undefined") {
+                          sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+                          setLoginGatePassed(true);
+                        }
+                        setEmailInput("");
+                        setPasswordInput("");
+                      } catch (e: unknown) {
+                        const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : "";
+                        const msg =
+                          code === "auth/email-already-in-use"
+                            ? "이미 가입된 이메일입니다. 로그인을 사용하세요."
+                            : code === "auth/weak-password"
+                              ? "비밀번호는 6자 이상이어야 합니다."
+                              : code === "auth/invalid-email"
+                                ? "올바른 이메일 형식이 아닙니다."
+                                : e instanceof Error ? e.message : "가입에 실패했습니다.";
+                        setEmailError(msg);
+                      } finally {
+                        setEmailLoading(false);
+                      }
+                    }}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-tap"
+                  >
+                    가입
+                  </button>
+                  <button
+                    type="button"
+                    disabled={emailLoading || !emailInput.trim() || !passwordInput}
+                    onClick={async () => {
+                      const email = emailInput.trim();
+                      const password = passwordInput;
+                      if (!email || !password) return;
+                      setEmailError("");
+                      setEmailLoading(true);
+                      try {
+                        await ensureFirebase();
+                        const { email: signedEmail, emailVerified } = await signInWithEmailAuth(email, password);
+                        const nextInfo = { ...myInfo, email: signedEmail };
+                        setMyInfo(nextInfo);
+                        saveMyInfo(nextInfo);
+                        if (emailVerified && typeof window !== "undefined") {
+                          sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+                          setLoginGatePassed(true);
+                        }
+                      } catch (e: unknown) {
+                        const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : "";
+                        const msg =
+                          code === "auth/invalid-credential" || code === "auth/user-not-found" || code === "auth/wrong-password"
+                            ? "이메일 또는 비밀번호가 맞지 않습니다."
+                            : code === "auth/invalid-email"
+                              ? "올바른 이메일 형식이 아닙니다."
+                              : e instanceof Error ? e.message : "로그인에 실패했습니다.";
+                        setEmailError(msg);
+                      } finally {
+                        setEmailLoading(false);
+                      }
+                    }}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-tap"
+                  >
+                    로그인
+                  </button>
+                </div>
+                {emailError && (
+                  <p className="text-xs text-amber-600" role="alert">
+                    {emailError}
+                  </p>
+                )}
+              </div>
             )}
 
             <button
@@ -2237,106 +2434,195 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
         {navView === "myinfo" && (
           <div key="myinfo" className="pt-4 space-y-2 animate-fade-in">
-            {/* 로그인 기능 최상단 */}
-            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
-              <div className="px-3 py-3 space-y-3">
-                {isPhoneAuthAvailable() && (myInfo.phoneNumber || getCurrentPhoneUser()) && (
-                  <>
-                    <p className="text-xs text-slate-500">
-                      전화번호: {myInfo.phoneNumber || getCurrentPhoneUser()?.phoneNumber || ""}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={async () => {
+            {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
+            {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
+              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+                <div className="px-3 py-3 space-y-3">
+                  <p className="text-xs text-slate-500">
+                    로그인 수단:{" "}
+                    {[
+                      isPhoneAuthAvailable() && getCurrentPhoneUser() &&
+                        `전화번호 (${getCurrentPhoneUser()?.phoneNumber || ""})`,
+                      isEmailAuthAvailable() && getCurrentEmailUser() &&
+                        `이메일 (${getCurrentEmailUser()?.email || ""})`,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (isPhoneAuthAvailable() && getCurrentPhoneUser()) {
                         await signOutPhone();
                         setMyInfo((prev) => ({ ...prev, phoneNumber: undefined }));
-                        setLoginMessage("전화번호 로그아웃했습니다.");
-                      }}
-                      className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
-                    >
-                      전화번호 로그아웃
-                    </button>
-                  </>
-                )}
-                {loginMessage && (
-                  <p className="text-xs px-2 py-1.5 rounded-lg text-slate-500 bg-slate-100">
-                    {loginMessage}
-                  </p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof window !== "undefined") {
-                      sessionStorage.removeItem(LOGIN_GATE_KEY);
-                      setLoginGatePassed(false);
-                    }
-                  }}
-                  className="w-full px-4 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors btn-tap"
-                >
-                  처음 로그인 화면으로
-                </button>
+                      }
+                      if (isEmailAuthAvailable() && getCurrentEmailUser()) {
+                        await signOutEmail();
+                        setMyInfo((prev) => ({ ...prev, email: undefined }));
+                      }
+                      if (typeof window !== "undefined") {
+                        sessionStorage.removeItem(LOGIN_GATE_KEY);
+                        setLoginGatePassed(false);
+                      }
+                    }}
+                    className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
+                  >
+                    로그아웃
+                  </button>
+                </div>
               </div>
-            </div>
-            <p className="text-sm text-slate-600 leading-snug mb-1.5">로그인 정보, 가입 클럽, 승률 통계를 확인·수정할 수 있습니다.</p>
-            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
-              <div className="px-2 py-2 space-y-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-700 mb-1.5">로그인 정보</h3>
-                  {(myInfo.profileImageUrl || myInfo.name) && (
-                    <div className="flex items-center gap-3 mb-3 p-2 rounded-xl bg-slate-50 border border-slate-100">
-                      <div className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden bg-slate-200 ring-2 ring-white shadow">
-                        {myInfo.profileImageUrl ? (
-                          <img
-                            src={myInfo.profileImageUrl}
-                            alt="프로필"
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <span className="w-full h-full flex items-center justify-center text-slate-500 text-lg font-medium">
-                            {myInfo.name?.charAt(0)?.toUpperCase() || "?"}
-                          </span>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{myInfo.name || "이름 없음"}</p>
-                        <p className="text-xs text-slate-500 truncate">{myInfo.email || "이메일 없음"}</p>
-                      </div>
+            ) : null}
+
+            {/* 나의 프로필 수정 (로그인 시) */}
+            {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
+              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+                <div className="px-3 py-3 border-b border-[#e8e8ed]">
+                  <h3 className="text-sm font-semibold text-slate-800">나의 프로필 수정</h3>
+                </div>
+                <div className="px-3 py-3 space-y-4">
+                  <div className="flex items-center gap-3 p-2 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="flex-shrink-0 w-14 h-14 rounded-full overflow-hidden bg-slate-200 ring-2 ring-white shadow">
+                      {myInfo.profileImageUrl ? (
+                        <img
+                          src={myInfo.profileImageUrl}
+                          alt="프로필"
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      ) : (
+                        <span className="w-full h-full flex items-center justify-center text-slate-500 text-xl font-medium">
+                          {myInfo.name?.charAt(0)?.toUpperCase() || "?"}
+                        </span>
+                      )}
                     </div>
-                  )}
-                  <p className="text-xs text-slate-500 mb-1">앱에 연동할 이메일·이름입니다. (현재 로컬 저장)</p>
-                  <p className="text-xs text-slate-500 mb-1.5">로그인 정보와 결합해 나를 정의합니다.</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="text"
-                      value={myInfo.name}
-                      onChange={(e) => setMyInfo((prev) => ({ ...prev, name: e.target.value }))}
-                      placeholder="이름"
-                      className="flex-1 min-w-[4rem] px-2 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                      aria-label="이름"
-                    />
-                    <select
-                      value={myInfo.gender}
-                      onChange={(e) => setMyInfo((prev) => ({ ...prev, gender: e.target.value as "M" | "F" }))}
-                      className="px-2 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] shrink-0"
-                      aria-label="성별"
-                    >
-                      <option value="M">남</option>
-                      <option value="F">여</option>
-                    </select>
-                    <select
-                      value={myInfo.grade}
-                      onChange={(e) => setMyInfo((prev) => ({ ...prev, grade: e.target.value as Grade }))}
-                      className="w-14 px-2 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] shrink-0"
-                      aria-label="급수"
-                    >
-                      <option value="A">A</option>
-                      <option value="B">B</option>
-                      <option value="C">C</option>
-                      <option value="D">D</option>
-                    </select>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800 truncate">
+                        {myInfo.name || "이름 없음"}
+                        <span className="text-slate-600 font-normal ml-1">{myInfo.gender === "F" ? "여" : "남"}</span>
+                        <span className="text-slate-600 font-normal ml-1">{myInfo.grade ?? "D"}</span>
+                      </p>
+                      {myInfo.birthDate && <p className="text-xs text-slate-500">생년월일 {myInfo.birthDate}</p>}
+                    </div>
+                  </div>
+                  <div className="grid gap-3">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">이름</label>
+                      <input
+                        type="text"
+                        value={myInfo.name}
+                        onChange={(e) => {
+                          const next = { ...myInfo, name: e.target.value };
+                          setMyInfo(next);
+                          saveMyInfo(next);
+                        }}
+                        placeholder="이름"
+                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        aria-label="이름"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">성별</label>
+                      <select
+                        value={myInfo.gender}
+                        onChange={(e) => {
+                          const next = { ...myInfo, gender: e.target.value as "M" | "F" };
+                          setMyInfo(next);
+                          saveMyInfo(next);
+                        }}
+                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                        aria-label="성별"
+                      >
+                        <option value="M">남</option>
+                        <option value="F">여</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">급수</label>
+                      <select
+                        value={myInfo.grade ?? "D"}
+                        onChange={(e) => {
+                          const next = { ...myInfo, grade: e.target.value as Grade };
+                          setMyInfo(next);
+                          saveMyInfo(next);
+                        }}
+                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                        aria-label="급수"
+                      >
+                        <option value="A">A</option>
+                        <option value="B">B</option>
+                        <option value="C">C</option>
+                        <option value="D">D</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">전화번호 (연락처)</label>
+                      <input
+                        type="tel"
+                        value={myInfo.phoneNumber ?? ""}
+                        onChange={(e) => {
+                          const next = { ...myInfo, phoneNumber: e.target.value.trim() || undefined };
+                          setMyInfo(next);
+                          saveMyInfo(next);
+                        }}
+                        placeholder="010-1234-5678"
+                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        aria-label="전화번호"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">생년월일</label>
+                      <input
+                        type="date"
+                        value={myInfo.birthDate ?? ""}
+                        onChange={(e) => {
+                          const next = { ...myInfo, birthDate: e.target.value || undefined };
+                          setMyInfo(next);
+                          saveMyInfo(next);
+                        }}
+                        className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        aria-label="생년월일"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-slate-600 shrink-0 w-28">프로필 사진</label>
+                      <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#d2d2d7] bg-white text-sm text-slate-700 hover:bg-slate-50 cursor-pointer btn-tap">
+                        <span>📷</span>
+                        <span>파일 선택</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="sr-only"
+                          aria-label="프로필 사진 파일 선택"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const maxKB = 200;
+                            if (file.size > maxKB * 1024) {
+                              alert(`파일이 너무 큽니다. ${maxKB}KB 이하로 줄여 주세요.`);
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              const dataUrl = reader.result as string;
+                              const next = { ...myInfo, profileImageUrl: dataUrl };
+                              setMyInfo(next);
+                              saveMyInfo(next);
+                            };
+                            reader.readAsDataURL(file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      <span className="text-xs text-slate-500">200KB 이하 권장</span>
+                    </div>
+                    </div>
                   </div>
                 </div>
+            )}
+
+            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+              <div className="px-2 py-2 space-y-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-700 mb-1.5">승률 통계</h3>
                   <p className="text-xs text-slate-500 mb-1.5">나를 기준으로 상대 조합(AA·AB·BB 등)별 승률만 테이블로 표시합니다.</p>
@@ -2419,9 +2705,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <button
           type="button"
           onClick={() => setNavView("myinfo")}
-          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${myInfo.phoneNumber ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
+          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl transition-colors btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"} ${(getCurrentPhoneUser() || getCurrentEmailUser()) ? "ring-2 ring-green-500/70 ring-inset" : ""}`}
         >
-          {myInfo.phoneNumber && (
+          {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-green-500 shrink-0" aria-hidden title="로그인됨" />
           )}
           <img src="/myinfo-icon.png" alt="" className="w-10 h-10 object-contain" />
