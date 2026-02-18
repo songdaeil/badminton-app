@@ -26,6 +26,7 @@ import {
 } from "@/lib/phone-auth";
 import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
+import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
 function encodeGameForShare(data: GameData): string {
@@ -106,10 +107,10 @@ function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): M
 
 /** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
 const GAME_CATEGORIES = [
-  { id: "doubles", label: "복식" },
-  { id: "singles", label: "단식" },
-  { id: "contest", label: "대항전" },
-  { id: "team", label: "단체" },
+  { id: "doubles", label: "복식", Icon: IconCategoryUsers },
+  { id: "singles", label: "단식", Icon: IconCategoryUser },
+  { id: "contest", label: "대항전", Icon: IconCategorySword },
+  { id: "team", label: "단체", Icon: IconCategoryUsersRound },
 ] as const;
 
 /** 경기 방식 목록. 선택한 방식이 경기 설정(한 경기당 몇 점 등)에 반영됨 */
@@ -1569,9 +1570,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         setGameSettings((prev) => ({ ...prev, scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore }));
                       }
                     }}
-                    className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
+                    className={`shrink-0 px-2.5 py-2 text-lg font-medium border-b-2 transition-colors flex items-center gap-2 ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
                   >
-                    {cat.label}
+                    {cat.Icon && <cat.Icon size={32} className="shrink-0" />}
+                    <span>{cat.label}</span>
                   </button>
                 );
               })}
