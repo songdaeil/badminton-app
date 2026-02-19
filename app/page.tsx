@@ -28,8 +28,6 @@ import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
-import { ProfileBadge } from "./components/profile-badge";
-
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
 function encodeGameForShare(data: GameData): string {
   const payload = {
@@ -42,6 +40,7 @@ function encodeGameForShare(data: GameData): string {
     createdAt: data.createdAt ?? undefined,
     createdBy: data.createdBy ?? undefined,
     createdByName: data.createdByName ?? undefined,
+    createdByUid: data.createdByUid ?? undefined,
   };
   const json = JSON.stringify(payload);
   const base64 = btoa(encodeURIComponent(json));
@@ -66,6 +65,7 @@ function decodeGameFromShare(encoded: string): GameData | null {
       createdAt: typeof p.createdAt === "string" ? p.createdAt : undefined,
       createdBy: typeof p.createdBy === "string" ? p.createdBy : undefined,
       createdByName: typeof p.createdByName === "string" ? p.createdByName : undefined,
+      createdByUid: typeof p.createdByUid === "string" ? p.createdByUid : undefined,
     };
   } catch {
     return null;
@@ -262,12 +262,15 @@ function createId() {
   return Math.random().toString(36).slice(2, 11);
 }
 
-/** 저장 시각을 짧게 표시 (M/D HH:mm) */
+/** 저장 시각을 짧게 표시 (M/D HH:mm:ss) — 저장 여부 확인용 */
 function formatSavedAt(iso?: string | null): string {
   if (!iso) return "";
   try {
     const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+    const h = d.getHours().toString().padStart(2, "0");
+    const min = d.getMinutes().toString().padStart(2, "0");
+    const sec = d.getSeconds().toString().padStart(2, "0");
+    return `${d.getMonth() + 1}/${d.getDate()} ${h}:${min}:${sec}`;
   } catch {
     return "";
   }
@@ -370,13 +373,9 @@ function buildRoundRobinMatches(members: Member[], targetTotal: number): Match[]
  * 경기 목록에서 "경기 생성" 시 반드시 이 함수만 사용하여, 경기 방식 섹션에서 정의한 로직과 일치시킴.
  */
 function generateMatchesByGameMode(gameModeId: string, members: Member[]): Match[] {
-  if (gameModeId === "individual") {
+  if (gameModeId === "individual" || gameModeId === "individual_b") {
     const target = getTargetTotalGames(members.length);
     return buildRoundRobinMatches(members, target);
-  }
-  if (gameModeId === "individual_b") {
-    // 개인전b 전용 경기 생성 로직 (추후 규칙에 맞게 구현)
-    return [];
   }
   return [];
 }
@@ -516,6 +515,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [recordDetailClosing, setRecordDetailClosing] = useState(false);
   /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  /** 경기 생성 후 명단이 바뀌지 않았으면 버튼 비활성화. 명단 변경 시 true로 바꿔 다시 활성화 */
+  const [rosterChangedSinceGenerate, setRosterChangedSinceGenerate] = useState(true);
   /** Firestore에서 내려온 데이터 적용 시 다음 save 시 Firestore 업로드 스킵 */
   const skipNextFirestorePush = useRef(false);
   /** Firestore 업로드 디바운스 (편집 시 매 입력마다 업로드하지 않도록) */
@@ -526,6 +527,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const SAVE_DEBOUNCE_MS = 400;
   /** 구독으로 원격 데이터 적용 시, 입력 중인 점수(미저장)를 덮어쓰지 않도록 최신 scoreInputs 참조 */
   const scoreInputsRef = useRef<Record<string, { s1: string; s2: string }>>({});
+  /** 경기 요약(이름/날짜/시간/장소/승점) 입력 포커스 중이면 원격 데이터로 덮어쓰지 않음 → 백스페이스 등 편집 정상 동작 */
+  const gameSummaryFocusedRef = useRef(false);
+  /** 명단 추가/삭제 직후 이 시간(ms)까지는 원격 members 적용 스킵 → 추가가 즉시 덮어씌워지는 것 방지 */
+  const rosterEditCooldownUntilRef = useRef(0);
+  /** 진행 버튼(진행/가능 토글) 누른 직후 이 시간(ms)까지는 원격 playingMatchIds 적용 스킵 → 다른 경기로 진행 옮겨도 유지 */
+  const playingSelectionCooldownUntilRef = useRef(0);
+  /** 경기 현황 저장 버튼 누른 직후 이 시간(ms)까지는 원격 matches/점수 적용 스킵 → 저장 후 다시 돌아가는 현상 방지 */
+  const saveResultCooldownUntilRef = useRef(0);
+  /** 공유 경기 진입 후 로드 직후 이 시간(ms) 동안은 구독 첫 스냅샷으로 state 덮어쓰지 않음 → 경기 생성 등이 동작하도록 */
+  const sharedGameLoadDoneAtRef = useRef(0);
+  /** 경기 결과 저장 연타 시 Firestore 업로드 한 번만(디바운스) → 완료 순서 뒤바뀜으로 이전 값 덮어쓰기 방지 */
+  const saveResultFirestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const SAVE_RESULT_FIRESTORE_DEBOUNCE_MS = 500;
   useEffect(() => {
     scoreInputsRef.current = scoreInputs;
   }, [scoreInputs]);
@@ -568,36 +582,86 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setSelectedPlayingMatchIds([]);
       setMyProfileMemberId(null);
       setHighlightMemberId(null);
+      setRosterChangedSinceGenerate(true);
       setMounted(true);
       return;
     }
-    const data = loadGame(effectiveGameId);
-    const membersWithCorrectStats = recomputeMemberStatsFromMatches(data.members, data.matches);
-    setMembers(membersWithCorrectStats);
-    setGameName(typeof data.gameName === "string" && data.gameName.trim() ? data.gameName.trim() : "");
-    setMatches(data.matches);
-    setMyProfileMemberId(
-      data.myProfileMemberId ?? data.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
-    );
-    const loadedModeId = data.gameMode && GAME_MODES.some((m) => m.id === data.gameMode) ? data.gameMode! : GAME_MODES[0].id;
-    setGameModeId(loadedModeId);
-    const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
-    setGameModeCategoryId(loadedMode.categoryId ?? GAME_CATEGORIES[0].id);
-    const baseSettings = data.gameSettings ?? { ...DEFAULT_GAME_SETTINGS };
-    const rawScore = baseSettings.scoreLimit;
-    const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
-    const validTime = TIME_OPTIONS_30MIN.includes(baseSettings.time) ? baseSettings.time : TIME_OPTIONS_30MIN[0];
-    setGameSettings({ ...baseSettings, scoreLimit: validScore, time: validTime });
-    const inputs: Record<string, { s1: string; s2: string }> = {};
-    for (const m of data.matches) {
-      inputs[m.id] = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
-    }
-    setScoreInputs(inputs);
-    const matchIdSet = new Set(data.matches.map((m) => String(m.id)));
-    const validPlayingIds = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
-    setSelectedPlayingMatchIds(validPlayingIds);
-    setHighlightMemberId(null);
-    setMounted(true);
+    const id = effectiveGameId;
+    let cancelled = false;
+    (async () => {
+      let data = loadGame(id);
+      if (data.shareId && isSyncAvailable()) {
+        const remote = await getSharedGame(data.shareId);
+        if (cancelled) return;
+        if (remote) {
+          const localSaved = (data.matches ?? []).filter((m) => m.score1 != null || m.score2 != null).length;
+          const remoteSaved = (remote.matches ?? []).filter((m) => m.score1 != null || m.score2 != null).length;
+          if (localSaved > remoteSaved) {
+            saveGame(id, { ...data, shareId: data.shareId });
+            setSharedGame(data.shareId, { ...data, shareId: data.shareId }).catch(() => {});
+          } else {
+            saveGame(id, { ...remote, shareId: data.shareId });
+            data = { ...remote, shareId: data.shareId };
+          }
+        }
+      }
+      if (cancelled) return;
+      const membersWithCorrectStats = recomputeMemberStatsFromMatches(data.members, data.matches);
+      setMembers(membersWithCorrectStats);
+      setGameName(typeof data.gameName === "string" && data.gameName.trim() ? data.gameName.trim() : "");
+      setMatches(data.matches);
+      setMyProfileMemberId(
+        data.myProfileMemberId ?? data.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
+      );
+      const loadedModeId = data.gameMode && GAME_MODES.some((m) => m.id === data.gameMode) ? data.gameMode! : GAME_MODES[0].id;
+      setGameModeId(loadedModeId);
+      const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
+      setGameModeCategoryId(loadedMode.categoryId ?? GAME_CATEGORIES[0].id);
+      const baseSettings = data.gameSettings ?? { ...DEFAULT_GAME_SETTINGS };
+      const rawScore = baseSettings.scoreLimit;
+      const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
+      const validTime = TIME_OPTIONS_30MIN.includes(baseSettings.time) ? baseSettings.time : TIME_OPTIONS_30MIN[0];
+      setGameSettings({ ...baseSettings, scoreLimit: validScore, time: validTime });
+      const inputs: Record<string, { s1: string; s2: string }> = {};
+      for (const m of data.matches) {
+        inputs[m.id] = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
+      }
+      setScoreInputs(inputs);
+      const matchIdSet = new Set(data.matches.map((m) => String(m.id)));
+      const validPlayingIds = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
+      setSelectedPlayingMatchIds(validPlayingIds);
+      setHighlightMemberId(null);
+      setRosterChangedSinceGenerate(data.matches.length === 0);
+      setMounted(true);
+      if (data.shareId) sharedGameLoadDoneAtRef.current = Date.now();
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveGameId]);
+
+  /** 경기 상세 이탈 시(목록으로·다른 섹션 이동 등) 공통: 디바운스·타이머 정리 후 로컬 최신값 저장 및 Firestore 업로드 */
+  useEffect(() => {
+    return () => {
+      if (effectiveGameId == null) return;
+      const leavingId = effectiveGameId;
+      if (saveDebounceTimerRef.current) {
+        clearTimeout(saveDebounceTimerRef.current);
+        saveDebounceTimerRef.current = null;
+      }
+      const pending = saveDebounceRef.current;
+      if (pending && pending.id === leavingId) {
+        saveGame(leavingId, pending.payload);
+        saveDebounceRef.current = null;
+      }
+      if (saveResultFirestoreTimerRef.current) {
+        clearTimeout(saveResultFirestoreTimerRef.current);
+        saveResultFirestoreTimerRef.current = null;
+      }
+      const data = loadGame(leavingId);
+      saveGame(leavingId, data);
+      if (data.shareId && isSyncAvailable()) {
+        setSharedGame(data.shareId, data).catch(() => {});
+      }
+    };
   }, [effectiveGameId]);
 
   /** shareId가 있는 경기 열람 시 Firestore 실시간 구독 → 원격 변경 시 로컬 저장 후 state 반영 */
@@ -610,39 +674,52 @@ export function GameView({ gameId }: { gameId: string | null }) {
     ensureFirebase().then(() => {
       if (!isSyncAvailable()) return;
       unsub = subscribeSharedGame(shareId, (remote) => {
+      const avoidOverwriteMs = 2500;
+      if (sharedGameLoadDoneAtRef.current > 0 && Date.now() - sharedGameLoadDoneAtRef.current < avoidOverwriteMs) return;
       skipNextFirestorePush.current = true;
       saveGame(effectiveGameId, remote);
-      const membersWithCorrectStats = recomputeMemberStatsFromMatches(remote.members, remote.matches);
-      setMembers(membersWithCorrectStats);
-      setGameName(typeof remote.gameName === "string" && remote.gameName.trim() ? remote.gameName.trim() : "");
-      setMatches(remote.matches);
-      setMyProfileMemberId(
-        remote.myProfileMemberId ?? remote.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
-      );
-      const loadedModeId = remote.gameMode && GAME_MODES.some((m) => m.id === remote.gameMode) ? remote.gameMode! : GAME_MODES[0].id;
-      setGameModeId(loadedModeId);
-      const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
-      setGameModeCategoryId(loadedMode.categoryId ?? GAME_CATEGORIES[0].id);
-      const baseSettings = remote.gameSettings ?? { ...DEFAULT_GAME_SETTINGS };
-      const rawScore = baseSettings.scoreLimit;
-      const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
-      const validTime = TIME_OPTIONS_30MIN.includes(baseSettings.time) ? baseSettings.time : TIME_OPTIONS_30MIN[0];
-      setGameSettings({ ...baseSettings, scoreLimit: validScore, time: validTime });
-      const currentInputs = scoreInputsRef.current;
-      const inputs: Record<string, { s1: string; s2: string }> = {};
-      for (const m of remote.matches) {
-        const fromRemote = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
-        const local = currentInputs[m.id];
-        if (local && (local.s1 !== fromRemote.s1 || local.s2 !== fromRemote.s2)) {
-          inputs[m.id] = local;
-        } else {
-          inputs[m.id] = fromRemote;
-        }
+      const inSaveResultCooldown = Date.now() < saveResultCooldownUntilRef.current;
+      const inRosterCooldown = Date.now() < rosterEditCooldownUntilRef.current;
+      if (!inRosterCooldown && !inSaveResultCooldown) {
+        const membersWithCorrectStats = recomputeMemberStatsFromMatches(remote.members, remote.matches);
+        setMembers(membersWithCorrectStats);
+        setMyProfileMemberId(
+          remote.myProfileMemberId ?? remote.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
+        );
       }
-      setScoreInputs(inputs);
-      const matchIdSet = new Set(remote.matches.map((m) => String(m.id)));
-      const validPlayingIds = (remote.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
-      setSelectedPlayingMatchIds(validPlayingIds);
+      if (!gameSummaryFocusedRef.current) {
+        setGameName(typeof remote.gameName === "string" && remote.gameName.trim() ? remote.gameName.trim() : "");
+        const loadedModeId = remote.gameMode && GAME_MODES.some((m) => m.id === remote.gameMode) ? remote.gameMode! : GAME_MODES[0].id;
+        setGameModeId(loadedModeId);
+        const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
+        setGameModeCategoryId(loadedMode.categoryId ?? GAME_CATEGORIES[0].id);
+        const baseSettings = remote.gameSettings ?? { ...DEFAULT_GAME_SETTINGS };
+        const rawScore = baseSettings.scoreLimit;
+        const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
+        const validTime = TIME_OPTIONS_30MIN.includes(baseSettings.time) ? baseSettings.time : TIME_OPTIONS_30MIN[0];
+        setGameSettings({ ...baseSettings, scoreLimit: validScore, time: validTime });
+      }
+      if (!inSaveResultCooldown) {
+        setMatches(remote.matches);
+        const currentInputs = scoreInputsRef.current;
+        const inputs: Record<string, { s1: string; s2: string }> = {};
+        for (const m of remote.matches) {
+          const fromRemote = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
+          const local = currentInputs[m.id];
+          if (local && (local.s1 !== fromRemote.s1 || local.s2 !== fromRemote.s2)) {
+            inputs[m.id] = local;
+          } else {
+            inputs[m.id] = fromRemote;
+          }
+        }
+        setScoreInputs(inputs);
+      }
+      const inPlayingCooldown = Date.now() < playingSelectionCooldownUntilRef.current;
+      if (!inPlayingCooldown) {
+        const matchIdSet = new Set(remote.matches.map((m) => String(m.id)));
+        const validPlayingIds = (remote.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
+        setSelectedPlayingMatchIds(validPlayingIds);
+      }
     });
     });
     return () => {
@@ -790,15 +867,23 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setMyInfo(info);
   }, []);
 
-  /** 로그인 시 Firestore에서 프로필 불러와 로컬에 반영 (원격에 있으면 업로드 완료로 간주) */
+  /** 로그인 시 Firestore에서 프로필 불러와 로컬에 반영. 나의 프로필에 UID 내포(연동 근거) */
   useEffect(() => {
     if (!authUid) return;
     getRemoteProfile(authUid).then((remote) => {
+      const withUid = { ...(remote ?? {}), uid: authUid } as MyInfo;
+      if (!withUid.name) withUid.name = "";
+      if (!withUid.gender) withUid.gender = "M";
       if (remote) {
-        setMyInfo(remote);
-        saveMyInfo(remote);
+        setMyInfo(withUid);
+        saveMyInfo(withUid);
         setHasUploadedProfileAfterLogin(true);
       } else {
+        setMyInfo((prev) => {
+          const next = { ...prev, uid: authUid };
+          saveMyInfo(next);
+          return next;
+        });
         setHasUploadedProfileAfterLogin(false);
       }
     });
@@ -834,9 +919,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
     }
     if (navView === "myinfo" && authUid) {
       getRemoteProfile(authUid).then((remote) => {
+        const withUid = { ...(remote ?? {}), uid: authUid } as MyInfo;
         if (remote) {
-          setMyInfo(remote);
-          saveMyInfo(remote);
+          if (!withUid.name) withUid.name = ""; if (!withUid.gender) withUid.gender = "M";
+          setMyInfo(withUid);
+          saveMyInfo(withUid);
+        } else {
+          setMyInfo((prev) => {
+            const next = { ...prev, uid: authUid };
+            saveMyInfo(next);
+            return next;
+          });
         }
       });
     }
@@ -990,31 +1083,23 @@ export function GameView({ gameId }: { gameId: string | null }) {
       createdAt: existing.createdAt ?? undefined,
       createdBy: existing.createdBy ?? undefined,
       createdByName: existing.createdByName ?? undefined,
+      createdByUid: existing.createdByUid ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
       importedFromShare: existing.importedFromShare ?? undefined,
       shareId: existing.shareId ?? undefined,
     };
+    /** 로컬 저장 후, 공유 경기(shareId)면 Firestore 업로드(실시간 공유). 원격 적용 직후 1회는 skipNextFirestorePush로 스킵 */
     const runSave = (id: string, data: GameData) => {
       saveGame(id, data);
-      if (data.shareId && isSyncAvailable() && !skipNextFirestorePush.current) {
-        const wouldOverwriteWithEmpty =
-          data.members.length === 0 &&
-          data.matches.length === 0 &&
-          (existing.members.length > 0 || existing.matches.length > 0);
-        if (!wouldOverwriteWithEmpty) {
-          if (firestorePushTimeoutRef.current) clearTimeout(firestorePushTimeoutRef.current);
-          firestorePushTimeoutRef.current = setTimeout(() => {
-            firestorePushTimeoutRef.current = null;
-            const latest = loadGame(id);
-            if (latest.shareId) {
-              setSharedGame(latest.shareId, latest)
-                .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(latest)); })
-                .catch(() => {});
-            }
-          }, 1000);
+      if (data.shareId && isSyncAvailable()) {
+        if (skipNextFirestorePush.current) {
+          skipNextFirestorePush.current = false;
+        } else {
+          setSharedGame(data.shareId, data)
+            .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
+            .catch(() => {});
         }
       }
-      skipNextFirestorePush.current = false;
     };
     saveDebounceRef.current = { id: effectiveGameId, payload };
     if (saveDebounceTimerRef.current) clearTimeout(saveDebounceTimerRef.current);
@@ -1049,7 +1134,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const mode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
     const defaultScore = mode.defaultScoreLimit ?? 21;
     const creatorName = myProfileMemberId ? members.find((m) => m.id === myProfileMemberId)?.name : null;
-    saveGame(id, {
+    const creatorUid = myInfo.uid ?? getCurrentUserUid();
+    const payload: GameData = {
       members: [],
       matches: [],
       gameName: undefined,
@@ -1058,8 +1144,20 @@ export function GameView({ gameId }: { gameId: string | null }) {
       createdAt: new Date().toISOString(),
       createdBy: myProfileMemberId ?? null,
       createdByName: (creatorName ?? myInfo.name) || "-",
-    });
+      createdByUid: creatorUid ?? null,
+    };
+    saveGame(id, payload);
     addGameToList(id);
+    if (creatorUid && isSyncAvailable()) {
+      addSharedGame(payload)
+        .then((newId) => {
+          if (newId) {
+            saveGame(id, { ...payload, shareId: newId });
+            setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId: newId }));
+          }
+        })
+        .catch(() => {});
+    }
     setSelectedGameId(null);
     setNavView("record");
   }, [gameModeId, myProfileMemberId, members, myInfo.name]);
@@ -1068,6 +1166,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (effectiveGameId === null) return;
     const id = createGameId();
     const existing = loadGame(effectiveGameId);
+    const creatorUid = myInfo.uid ?? getCurrentUserUid();
     saveGame(id, {
       members,
       matches,
@@ -1078,6 +1177,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       createdAt: existing.createdAt ?? undefined,
       createdBy: existing.createdBy ?? undefined,
       createdByName: existing.createdByName ?? undefined,
+      createdByUid: existing.createdByUid ?? creatorUid ?? undefined,
     });
     router.push(`/game/${id}`);
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, router]);
@@ -1093,7 +1193,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const handleCopyCard = useCallback((gameId: string) => {
     const existing = loadGame(gameId);
     const newId = createGameId();
-    saveGame(newId, {
+    const creatorUid = myInfo.uid ?? getCurrentUserUid();
+    const payload: GameData = {
       members: existing.members ?? [],
       matches: [],
       gameName: existing.gameName ?? undefined,
@@ -1103,9 +1204,21 @@ export function GameView({ gameId }: { gameId: string | null }) {
       createdAt: new Date().toISOString(),
       createdBy: null,
       createdByName: myInfo.name || "-",
+      createdByUid: creatorUid ?? null,
       playingMatchIds: [],
-    });
+    };
+    saveGame(newId, payload);
     addGameToList(newId);
+    if (creatorUid && isSyncAvailable()) {
+      addSharedGame(payload)
+        .then((shareId) => {
+          if (shareId) {
+            saveGame(newId, { ...payload, shareId });
+            setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId }));
+          }
+        })
+        .catch(() => {});
+    }
     setListMenuOpenId(null);
     setSelectedGameId(null);
   }, [myInfo.name]);
@@ -1187,6 +1300,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setMembers((prev) =>
       prev.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }))
     );
+    setRosterChangedSinceGenerate(false);
   }, [members, gameModeId]);
 
   const scoreLimit = Math.max(1, gameSettings.scoreLimit || 21);
@@ -1199,16 +1313,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
       const s2 = input.s2.trim() === "" ? 0 : parseInt(input.s2, 10);
       if (Number.isNaN(s1) || Number.isNaN(s2) || s1 < 0 || s2 < 0) return;
       if (s1 > scoreLimit || s2 > scoreLimit) return;
-      const match = matches.find((m) => m.id === matchId);
+      if (effectiveGameId === null) return;
+      const existing = loadGame(effectiveGameId);
+      const baseMatches = existing.matches ?? matches;
+      const match = baseMatches.find((m) => m.id === matchId);
       if (!match) return;
 
-      const winnerFirst = s1 > s2;
-      const diff = Math.abs(s1 - s2);
+      saveResultCooldownUntilRef.current = Date.now() + 3000;
       const now = new Date().toISOString();
       const savedByName = myInfo.name?.trim() || null;
       const record = { at: now, by: myProfileMemberId ?? "", savedByName };
 
-      const nextMatches = matches.map((m) =>
+      /* 연타 저장 시 state가 아직 갱신 전일 수 있으므로, 로컬에 마지막 저장된 matches 기준으로 이 매치만 반영 */
+      const nextMatches = baseMatches.map((m) =>
         m.id === matchId
           ? {
               ...m,
@@ -1220,12 +1337,46 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }
           : m
       );
+      const nextMembers = recomputeMemberStatsFromMatches(existing.members ?? members, nextMatches);
       setMatches(nextMatches);
       setMembers((prev) => recomputeMemberStatsFromMatches(prev, nextMatches));
       setSelectedPlayingMatchIds((prev) => prev.filter((id) => id !== matchId));
       setScoreInputs((prev) => ({ ...prev, [matchId]: { s1: String(s1), s2: String(s2) } }));
+
+      const membersToSave =
+        myProfileMemberId != null
+          ? nextMembers.map((m) =>
+              m.id === myProfileMemberId
+                ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
+                : m
+            )
+          : nextMembers;
+      const payload: GameData = {
+        ...existing,
+        members: membersToSave,
+        matches: nextMatches,
+        gameName: existing.gameName ?? (gameName && gameName.trim() ? gameName.trim() : undefined),
+        gameMode: existing.gameMode ?? gameModeId,
+        gameSettings: existing.gameSettings ?? gameSettings,
+        myProfileMemberId: existing.myProfileMemberId ?? myProfileMemberId ?? undefined,
+        playingMatchIds: (existing.playingMatchIds ?? selectedPlayingMatchIds).filter((id) => id !== matchId),
+      };
+      saveGame(effectiveGameId, payload);
+      if (payload.shareId && isSyncAvailable()) {
+        if (saveResultFirestoreTimerRef.current) clearTimeout(saveResultFirestoreTimerRef.current);
+        const gameIdToUpload = effectiveGameId;
+        saveResultFirestoreTimerRef.current = setTimeout(() => {
+          saveResultFirestoreTimerRef.current = null;
+          const data = loadGame(gameIdToUpload);
+          if (data.shareId && isSyncAvailable()) {
+            setSharedGame(data.shareId, data)
+              .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
+              .catch(() => {});
+          }
+        }, SAVE_RESULT_FIRESTORE_DEBOUNCE_MS);
+      }
     },
-    [matches, scoreInputs, scoreLimit, myProfileMemberId, myInfo.name]
+    [matches, scoreInputs, scoreLimit, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, effectiveGameId, gameName, gameModeId, gameSettings, members, selectedPlayingMatchIds]
   );
 
   const updateScoreInput = useCallback((matchId: string, side: "s1" | "s2", value: string) => {
@@ -1238,44 +1389,115 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const addMember = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setMembers((prev) => {
-      const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
-      if (prev.length >= max) return prev;
-      return [
-      ...prev,
-      {
-        id: createId(),
-        name: trimmed,
-        gender,
-        grade,
-        wins: 0,
-        losses: 0,
-        pointDiff: 0,
-      },
-    ];
-    });
-  }, [gameModeId]);
+    const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
+    if (members.length >= max) return;
+    rosterEditCooldownUntilRef.current = Date.now() + 1500;
+    const newId = createId();
+    const newMember: Member = { id: newId, name: trimmed, gender, grade, wins: 0, losses: 0, pointDiff: 0 };
+    const nextMembers = [...members, newMember];
+    setMembers(() => nextMembers);
+    setRosterChangedSinceGenerate(true);
+    if (effectiveGameId === null) return;
+    const existing = loadGame(effectiveGameId);
+    const membersToSave =
+      myProfileMemberId != null
+        ? nextMembers.map((m) =>
+            m.id === myProfileMemberId
+              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
+              : m
+          )
+        : nextMembers;
+    const payload: GameData = {
+      members: membersToSave,
+      matches,
+      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
+      gameMode: gameModeId,
+      gameSettings,
+      myProfileMemberId: myProfileMemberId ?? undefined,
+      createdAt: existing.createdAt ?? undefined,
+      createdBy: existing.createdBy ?? undefined,
+      createdByName: existing.createdByName ?? undefined,
+      createdByUid: existing.createdByUid ?? undefined,
+      playingMatchIds: selectedPlayingMatchIds,
+      importedFromShare: existing.importedFromShare ?? undefined,
+      shareId: existing.shareId ?? undefined,
+    };
+    saveGame(effectiveGameId, payload);
+    /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
+  }, [gameModeId, members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
 
-  /** 프로필로 나 추가 시 사용: Firebase 연동(linkedUid)으로 멤버 추가 후 '나'로 설정 */
+  /** 프로필로 나 추가 시 사용: 나의 프로필에 내포된 UID로 연동(linkedUid) 멤버 추가 후 '나'로 설정 */
   const addMemberAsMe = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const uid = getCurrentUserUid();
+    const uid = myInfo.uid ?? getCurrentUserUid();
     const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
+    if (members.length >= max) return;
+    rosterEditCooldownUntilRef.current = Date.now() + 1500;
     const newId = createId();
-    setMembers((prev) => {
-      if (prev.length >= max) return prev;
-      return [
-        ...prev,
-        { id: newId, name: trimmed, gender, grade, wins: 0, losses: 0, pointDiff: 0, linkedUid: uid ?? undefined },
-      ];
-    });
+    const newMember: Member = { id: newId, name: trimmed, gender, grade, wins: 0, losses: 0, pointDiff: 0, linkedUid: uid ?? undefined };
+    const nextMembers = [...members, newMember];
+    setMembers(() => nextMembers);
     setMyProfileMemberId(newId);
-  }, [gameModeId]);
+    setRosterChangedSinceGenerate(true);
+    if (effectiveGameId === null) return;
+    const existing = loadGame(effectiveGameId);
+    const membersToSave = nextMembers.map((m) =>
+      m.id === newId ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" } : m
+    );
+    const payload: GameData = {
+      members: membersToSave,
+      matches,
+      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
+      gameMode: gameModeId,
+      gameSettings,
+      myProfileMemberId: newId,
+      createdAt: existing.createdAt ?? undefined,
+      createdBy: existing.createdBy ?? undefined,
+      createdByName: existing.createdByName ?? undefined,
+      createdByUid: existing.createdByUid ?? undefined,
+      playingMatchIds: selectedPlayingMatchIds,
+      importedFromShare: existing.importedFromShare ?? undefined,
+      shareId: existing.shareId ?? undefined,
+    };
+    saveGame(effectiveGameId, payload);
+    /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
+  }, [gameModeId, myInfo.uid, members, effectiveGameId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
 
   const removeMember = useCallback((id: string) => {
-    setMembers((prev) => prev.filter((m) => m.id !== id));
-  }, []);
+    rosterEditCooldownUntilRef.current = Date.now() + 1500;
+    const nextMembers = members.filter((m) => m.id !== id);
+    setMembers(() => nextMembers);
+    setRosterChangedSinceGenerate(true);
+    if (myProfileMemberId === id) setMyProfileMemberId(null);
+    if (effectiveGameId === null) return;
+    const existing = loadGame(effectiveGameId);
+    const membersToSave =
+      myProfileMemberId != null && myProfileMemberId !== id
+        ? nextMembers.map((m) =>
+            m.id === myProfileMemberId
+              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
+              : m
+          )
+        : nextMembers;
+    const payload: GameData = {
+      members: membersToSave,
+      matches,
+      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
+      gameMode: gameModeId,
+      gameSettings,
+      myProfileMemberId: myProfileMemberId === id ? undefined : myProfileMemberId ?? undefined,
+      createdAt: existing.createdAt ?? undefined,
+      createdBy: existing.createdBy ?? undefined,
+      createdByName: existing.createdByName ?? undefined,
+      createdByUid: existing.createdByUid ?? undefined,
+      playingMatchIds: selectedPlayingMatchIds,
+      importedFromShare: existing.importedFromShare ?? undefined,
+      shareId: existing.shareId ?? undefined,
+    };
+    saveGame(effectiveGameId, payload);
+    /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
+  }, [members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
 
   /** 경기 결과 = 경기 현황(matches)만으로 산출. 명단에서 인원 삭제해도 결과는 현황 기준으로 유지 */
   const ranking = useMemo(
@@ -1320,11 +1542,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
    * 가능 = 바로 시작할 수 있는 경기.
    * - 진행 중인 경기가 하나도 없으면 → 종료 이외의 모든 경기를 가능으로 표시.
    * - 진행 중인 경기가 있으면 → 4명 모두 진행 외 인원인 경기만 가능.
-   * (현재 매치 목록에 없는 id는 무시 → 저장 후 등 항상 '진행 없음'이면 전부 가능)
+   * 진행 중 = 선택됐고 아직 미종료인 경기만 (종료된 경기는 진행에서 제외).
    */
-  const hasPlayingInList = selectedPlayingMatchIds.some((id) =>
-    matches.some((m) => String(m.id) === String(id))
-  );
+  const hasPlayingInList = selectedPlayingMatchIds.some((id) => {
+    const m = matches.find((x) => String(x.id) === String(id));
+    return m != null && m.score1 == null && m.score2 == null;
+  });
   const noPlayingSelected = !hasPlayingInList;
   const playableMatches = matches.filter((m) => {
     const isFinished = m.score1 != null && m.score2 != null;
@@ -1344,6 +1567,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const togglePlayingMatch = (matchId: string) => {
     const match = matches.find((m) => m.id === matchId);
     if (!match) return;
+    playingSelectionCooldownUntilRef.current = Date.now() + 2000;
     const thisPlayerIds = new Set(getMatchPlayerIds(match));
 
     setSelectedPlayingMatchIds((prev) => {
@@ -1543,7 +1767,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             setPhoneStep("sending");
                             try {
                               const { phoneNumber } = await confirmPhoneCode(conf, code);
-                              const nextInfo = { ...myInfo, phoneNumber };
+                              const uid = getCurrentUserUid();
+                              const nextInfo = { ...myInfo, phoneNumber, uid: uid ?? undefined };
                               setMyInfo(nextInfo);
                               saveMyInfo(nextInfo);
                               if (typeof window !== "undefined") {
@@ -1606,7 +1831,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       try {
                         await ensureFirebase();
                         const { email: signedEmail, needsVerification } = await signUpWithEmail(email, password);
-                        const nextInfo = { ...myInfo, email: signedEmail };
+                        const uid = getCurrentUserUid();
+                        const nextInfo = { ...myInfo, email: signedEmail, uid: uid ?? undefined };
                         setMyInfo(nextInfo);
                         saveMyInfo(nextInfo);
                         if (!needsVerification && typeof window !== "undefined") {
@@ -1646,7 +1872,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       try {
                         await ensureFirebase();
                         const { email: signedEmail, emailVerified } = await signInWithEmailAuth(email, password);
-                        const nextInfo = { ...myInfo, email: signedEmail };
+                        const uid = getCurrentUserUid();
+                        const nextInfo = { ...myInfo, email: signedEmail, uid: uid ?? undefined };
                         setMyInfo(nextInfo);
                         saveMyInfo(nextInfo);
                         if (emailVerified && typeof window !== "undefined") {
@@ -2001,8 +2228,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
         <div key="record-wrap" className="relative pt-4 min-h-[70vh]">
         {!selectedGameId && (
-        /* 경기 목록: Firestore 동기화된 카드는 listRefreshKey 갱신 시 최신 데이터 표시 */
-        <div key={`record-list-${listRefreshKey}`} className="space-y-0.5 animate-fade-in-up">
+        /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시. key는 고정해 갱신 시 카드가 통째로 팅겨 오르는 애니 재생 방지 */
+        <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
             const gameIds = loadGameList();
             const sortedIds = [...gameIds].sort((a, b) => {
@@ -2233,8 +2460,61 @@ export function GameView({ gameId }: { gameId: string | null }) {
           <div className="flex items-center justify-between gap-2 pb-2">
             <button
               type="button"
-              onClick={() => {
-                if (recordDetailClosing) return;
+              onClick={async () => {
+                if (recordDetailClosing || effectiveGameId === null) return;
+                /* 디바운스 대기 중인 저장 취소 후, DOM에서 경기 요약 최신값을 읽어 즉시 저장(편집 내용 유실 방지) */
+                if (saveDebounceTimerRef.current) {
+                  clearTimeout(saveDebounceTimerRef.current);
+                  saveDebounceTimerRef.current = null;
+                }
+                saveDebounceRef.current = null;
+                if (saveResultFirestoreTimerRef.current) {
+                  clearTimeout(saveResultFirestoreTimerRef.current);
+                  saveResultFirestoreTimerRef.current = null;
+                }
+                /* 저장 버튼 연타 시 state가 아직 반영 전일 수 있으므로, 로컬에 마지막 저장된 데이터(loadGame) 기준으로 payload 구성 */
+                const existing = loadGame(effectiveGameId);
+                const gameNameEl = document.getElementById("game-name") as HTMLInputElement | null;
+                const gameDateEl = document.getElementById("game-date") as HTMLInputElement | null;
+                const gameTimeEl = document.getElementById("game-time") as HTMLSelectElement | null;
+                const gameLocationEl = document.getElementById("game-location") as HTMLInputElement | null;
+                const gameScoreLimitEl = document.getElementById("game-score-limit") as HTMLInputElement | null;
+                const gameNameToSave = gameNameEl?.value?.trim() || undefined;
+                const dateToSave = gameDateEl?.value?.trim() || gameSettings.date;
+                const timeToSave = (gameTimeEl?.value && TIME_OPTIONS_30MIN.includes(gameTimeEl.value)) ? gameTimeEl.value : gameSettings.time;
+                const locationToSave = gameLocationEl?.value?.trim() ?? gameSettings.location;
+                const scoreRaw = gameScoreLimitEl?.value != null ? parseInt(gameScoreLimitEl.value, 10) : gameSettings.scoreLimit;
+                const scoreLimitToSave = Number.isNaN(scoreRaw) ? 21 : Math.max(1, Math.min(99, scoreRaw));
+                const membersToSave =
+                  myProfileMemberId != null && Array.isArray(existing.members)
+                    ? existing.members.map((m: Member) =>
+                        m.id === myProfileMemberId
+                          ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
+                          : m
+                      )
+                    : existing.members ?? [];
+                const payload: GameData = {
+                  members: membersToSave,
+                  matches: existing.matches ?? [],
+                  gameName: gameNameToSave,
+                  gameMode: existing.gameMode ?? gameModeId,
+                  gameSettings: { ...(existing.gameSettings ?? gameSettings), date: dateToSave, time: timeToSave, location: locationToSave, scoreLimit: scoreLimitToSave },
+                  myProfileMemberId: existing.myProfileMemberId ?? myProfileMemberId ?? undefined,
+                  createdAt: existing.createdAt ?? undefined,
+                  createdBy: existing.createdBy ?? undefined,
+                  createdByName: existing.createdByName ?? undefined,
+                  createdByUid: existing.createdByUid ?? undefined,
+                  playingMatchIds: existing.playingMatchIds ?? selectedPlayingMatchIds,
+                  importedFromShare: existing.importedFromShare ?? undefined,
+                  shareId: existing.shareId ?? undefined,
+                };
+                saveGame(effectiveGameId, payload);
+                if (payload.shareId && isSyncAvailable()) {
+                  try {
+                    const ok = await setSharedGame(payload.shareId, payload);
+                    if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload));
+                  } catch (_) {}
+                }
                 setRecordDetailClosing(true);
                 setTimeout(() => {
                   setSelectedGameId(null);
@@ -2265,6 +2545,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   type="text"
                   value={gameName}
                   onChange={(e) => setGameName(e.target.value)}
+                  onFocus={() => { gameSummaryFocusedRef.current = true; }}
+                  onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   placeholder="경기 이름 입력"
                   className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="경기 이름"
@@ -2293,12 +2575,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   type="date"
                   value={gameSettings.date}
                   onChange={(e) => setGameSettings((s) => ({ ...s, date: e.target.value }))}
+                  onFocus={() => { gameSummaryFocusedRef.current = true; }}
+                  onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
                   aria-label="날짜"
                 />
                 <select
+                  id="game-time"
                   value={TIME_OPTIONS_30MIN.includes(gameSettings.time) ? gameSettings.time : TIME_OPTIONS_30MIN[0]}
                   onChange={(e) => setGameSettings((s) => ({ ...s, time: e.target.value }))}
+                  onFocus={() => { gameSummaryFocusedRef.current = true; }}
+                  onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   className="w-24 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
                   aria-label="시작 시간 (30분 단위)"
                 >
@@ -2316,6 +2603,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   type="text"
                   value={gameSettings.location}
                   onChange={(e) => setGameSettings((s) => ({ ...s, location: e.target.value }))}
+                  onFocus={() => { gameSummaryFocusedRef.current = true; }}
+                  onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   placeholder="장소 입력"
                   className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="장소"
@@ -2338,6 +2627,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     const num = Number.isNaN(v) ? 21 : Math.max(1, Math.min(99, v));
                     setGameSettings((s) => ({ ...s, scoreLimit: num }));
                   }}
+                  onFocus={() => { gameSummaryFocusedRef.current = true; }}
+                  onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   placeholder="21"
                   className="flex-1 min-w-0 w-20 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   aria-label="한 경기당 득점 제한 (직접 입력)"
@@ -2352,7 +2643,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="px-2 py-1.5 border-b border-[#e8e8ed] flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
-                <p className="text-xs text-slate-500 mt-0.5">아래에서 경기 인원을 추가·삭제할 수 있습니다</p>
+                <p className="text-xs text-slate-500 mt-0.5">아래에서 경기 인원을 추가·삭제할 수 있습니다. <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>🔃</span>=연동(Firebase 계정) · <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>⏸️</span>=비연동</p>
               </div>
               <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
                 {members.length}명
@@ -2362,32 +2653,30 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <table className="w-full border-collapse border border-slate-300 text-left">
                 <thead>
                   <tr className="bg-slate-100">
-                    <th className="border-l border-slate-300 first:border-l-0 px-1 py-0.5 text-xs font-semibold text-slate-700 w-10">번호</th>
-                    <th className="border-l border-slate-300 px-1 py-0.5 text-xs font-semibold text-slate-700 min-w-[6rem] w-32">이름</th>
-                    <th className="border-l border-slate-300 px-1 py-0.5 text-xs font-semibold text-slate-700 w-9">성별</th>
-                    <th className="border-l border-slate-300 px-1 py-0.5 text-xs font-semibold text-slate-700 w-12">급수</th>
-                    <th className="border-l border-slate-300 px-1 py-0.5 text-xs font-semibold text-slate-700 min-w-[3rem] w-14">삭제</th>
+                    <th className="border-l border-slate-300 first:border-l-0 px-1 py-0 text-xs font-semibold text-slate-700 w-10">번호</th>
+                    <th className="border-l border-slate-300 px-1 py-0 text-xs font-semibold text-slate-700 min-w-[6rem] w-32">프로필</th>
+                    <th className="border-l border-slate-300 px-1 py-0 text-xs font-semibold text-slate-700 min-w-[3rem] w-14">삭제</th>
                   </tr>
                 </thead>
                 <tbody>
                   {members.map((m, i) => (
                     <tr key={m.id} className="bg-slate-50 even:bg-white">
-                      <td className="border-l border-slate-300 first:border-l-0 px-1 py-0.5">
-                        {String(i + 1).padStart(2, "0")}
+                      <td className="border-l border-slate-300 first:border-l-0 px-1 py-0 align-middle">
+                        <span className="inline-block text-sm leading-tight">{String(i + 1).padStart(2, "0")}</span>
                       </td>
-                      <td className="border-l border-slate-300 px-1 py-0.5 text-sm font-semibold text-slate-800 whitespace-nowrap min-w-0">
-                        <span className="inline-flex items-center gap-1">
+                      <td className="border-l border-slate-300 px-1 py-0 align-middle text-sm font-medium text-slate-800 whitespace-nowrap min-w-0 leading-tight">
+                        <span className="tracking-tighter inline-flex items-center gap-0" style={{ letterSpacing: "-0.02em" }}>
                           {m.name}
-                          {m.linkedUid ? <span className="text-[10px] text-slate-600 bg-slate-100 px-1 rounded shrink-0" title="Firebase 사용자 연동">연동</span> : null}
+                          <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={m.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={m.linkedUid ? "연동" : "비연동"}>
+                            <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{m.linkedUid ? "🔃" : "⏸️"}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: m.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
+                            <span className="inline-block">{m.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
+                            <span className="inline-block leading-none align-middle text-black">{m.grade}</span>
+                          </span>
                         </span>
                       </td>
-                      <td className="border-l border-slate-300 px-1 py-0.5 text-xs text-slate-500">
-                        {m.gender === "M" ? "남" : m.gender === "F" ? "여" : "-"}
-                      </td>
-                      <td className="border-l border-slate-300 px-1 py-0.5 text-xs text-slate-600">
-                        {m.grade}
-                      </td>
-                      <td className="border-l border-slate-300 px-1 py-0.5">
+                      <td className="border-l border-slate-300 px-1 py-0 align-middle">
                         <button
                           type="button"
                           onClick={() => removeMember(m.id)}
@@ -2399,71 +2688,62 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       </td>
                     </tr>
                   ))}
-                  <tr className="bg-slate-100/50">
-                    <td className="border-l border-slate-300 first:border-l-0 px-1 py-0.5 align-middle text-slate-500 text-xs">+</td>
-                    <td className="border-l border-slate-300 px-1 py-0.5 align-middle min-w-0">
-                      <input
-                        type="text"
-                        value={newMemberName}
-                        onChange={(e) => setNewMemberName(e.target.value)}
-                        placeholder="이름"
-                        aria-label="이름"
-                        className="w-full min-w-0 h-6 px-1.5 py-0 text-xs rounded border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] focus:outline-none focus:ring-1 focus:ring-[#0071e3]/25 focus:border-[#0071e3] box-border"
-                      />
-                    </td>
-                    <td className="border-l border-slate-300 px-1 py-0.5 align-middle">
-                      <select
-                        value={newMemberGender}
-                        onChange={(e) => setNewMemberGender(e.target.value as "M" | "F")}
-                        aria-label="성별"
-                        className="w-full min-w-0 h-6 px-0.5 py-0 text-xs rounded border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-1 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                      >
-                        <option value="M">남</option>
-                        <option value="F">여</option>
-                      </select>
-                    </td>
-                    <td className="border-l border-slate-300 px-1 py-0.5 align-middle">
-                      <select
-                        value={newMemberGrade}
-                        onChange={(e) => setNewMemberGrade(e.target.value as Grade)}
-                        aria-label="급수"
-                        className="w-full min-w-0 h-6 px-0.5 py-0 text-xs rounded border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-1 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                      >
-                        <option value="A">A</option>
-                        <option value="B">B</option>
-                        <option value="C">C</option>
-                        <option value="D">D</option>
-                      </select>
-                    </td>
-                    <td className="border-l border-slate-300 px-1 py-0.5 align-middle w-14 min-w-[3rem]">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const trimmed = newMemberName.trim();
-                          if (!trimmed) {
-                            alert("이름을 입력해 주세요.");
-                            return;
-                          }
-                          if (members.length >= gameMode.maxPlayers) {
-                            alert(`경기 인원은 최대 ${gameMode.maxPlayers}명까지입니다.`);
-                            return;
-                          }
-                          addMember(trimmed, newMemberGender, newMemberGrade);
-                          setNewMemberName("");
-                        }}
-                        className="h-6 min-w-[2.25rem] px-2 rounded text-xs font-medium text-white whitespace-nowrap hover:opacity-90 bg-[#0071e3] box-border"
-                      >
-                        추가
-                      </button>
-                    </td>
-                  </tr>
                 </tbody>
               </table>
             </div>
             <div className="border-t border-[#e8e8ed] px-2 py-2">
-              <p className="text-xs text-slate-500 mb-1">
-                <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
-              </p>
+              <div className="flex flex-row items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium text-slate-600 shrink-0">인원 추가</span>
+                <input
+                  type="text"
+                  value={newMemberName}
+                  onChange={(e) => setNewMemberName(e.target.value)}
+                  placeholder="이름"
+                  aria-label="이름"
+                  className="flex-1 min-w-[4rem] h-9 px-3 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] box-border"
+                />
+                <select
+                  value={newMemberGender}
+                  onChange={(e) => setNewMemberGender(e.target.value as "M" | "F")}
+                  aria-label="성별"
+                  className="shrink-0 w-16 h-9 px-2 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                >
+                  <option value="M">남</option>
+                  <option value="F">여</option>
+                </select>
+                <select
+                  value={newMemberGrade}
+                  onChange={(e) => setNewMemberGrade(e.target.value as Grade)}
+                  aria-label="급수"
+                  className="shrink-0 w-14 h-9 px-2 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                >
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="D">D</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = newMemberName.trim();
+                    if (!trimmed) {
+                      alert("이름을 입력해 주세요.");
+                      return;
+                    }
+                    if (members.length >= gameMode.maxPlayers) {
+                      alert(`경기 인원은 최대 ${gameMode.maxPlayers}명까지입니다.`);
+                      return;
+                    }
+                    addMember(trimmed, newMemberGender, newMemberGrade);
+                    setNewMemberName("");
+                  }}
+                  className="shrink-0 h-9 px-4 rounded-lg text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+                >
+                  추가
+                </button>
+              </div>
+            </div>
+            <div className="border-t border-[#e8e8ed] px-2 py-2">
               <button
                 type="button"
                 onClick={(e) => {
@@ -2474,7 +2754,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     alert("경기 이사에서 프로필 이름을 먼저 입력해 주세요.");
                     return;
                   }
-                  const uid = getCurrentUserUid();
+                  const uid = myInfo.uid ?? getCurrentUserUid();
                   if (uid && members.some((m) => m.linkedUid === uid)) {
                     alert("이미 명단에 있습니다.");
                     return;
@@ -2495,6 +2775,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </button>
               <button
                 type="button"
+                disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers || (matches.length > 0 && !rosterChangedSinceGenerate)}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -2508,10 +2789,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   }
                   doMatch();
                 }}
-                className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 bg-[#0071e3] hover:bg-[#0077ed] btn-tap disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
               >
                 경기 생성
               </button>
+              <p className="text-xs text-slate-500 mt-1.5">
+                <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
+              </p>
               {members.length < gameMode.minPlayers && (
                 <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.minPlayers}</span>~<span className="font-numeric">{gameMode.maxPlayers}</span>명이어야 합니다.</p>
               )}
@@ -2586,8 +2870,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
               <div className="divide-y divide-slate-100">
                 {matches.map((m, index) => {
-                  const isCurrent = playingMatchIdsSet.has(String(m.id));
                   const isDone = m.score1 !== null && m.score2 !== null;
+                  /** 진행 = 선택됐고 아직 미종료인 경기만 (종료된 경기는 항상 종료로 표시) */
+                  const isCurrent = !isDone && playingMatchIdsSet.has(String(m.id));
                   /** 가능 = playableMatchIdsSet과 동일 기준 (진행 표식 외 인원만으로 된 경기 = 가능) */
                   const isPlayable =
                     !isDone &&
@@ -2640,11 +2925,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             key={p.id}
                             type="button"
                             onClick={() => setHighlightMemberId((prev) => (prev === p.id ? null : p.id))}
-                            className={`block w-full text-left text-sm leading-none truncate rounded px-0.5 -mx-0.5 ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500" : "font-medium text-slate-700 hover:bg-slate-100"} ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
+                            className={`block w-full text-left text-sm leading-none truncate rounded px-0.5 -mx-0.5 font-medium text-slate-700 hover:bg-slate-100 ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
                             title={isHighlight ? "클릭 시 하이라이트 해제" : `${p.name} 클릭 시 이 선수 경기만 하이라이트 (같은 줄 왼쪽=파트너, 오른쪽=상대)`}
                           >
-                            <span className="inline-flex items-center gap-1 truncate">
-                              <span>{p.name} <span className={isHighlight ? "text-amber-900/80 font-semibold" : "text-slate-500 font-normal"}>({p.gender === "M" ? "남" : "여"} {p.grade})</span></span>
+                            <span className={`tracking-tighter inline-flex items-center gap-0 truncate text-sm ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500 rounded px-0.5" : ""}`} style={{ letterSpacing: "-0.02em" }}>
+                              {p.name}
+                              <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={p.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={p.linkedUid ? "연동" : "비연동"}>
+                                <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{p.linkedUid ? "🔃" : "⏸️"}</span>
+                              </span>
+                              <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: p.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
+                                <span className="inline-block">{p.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
+                                <span className="inline-block leading-none align-middle text-black">{p.grade}</span>
+                              </span>
                             </span>
                           </button>
                         );
@@ -2695,11 +2987,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             key={p.id}
                             type="button"
                             onClick={() => setHighlightMemberId((prev) => (prev === p.id ? null : p.id))}
-                            className={`block w-full text-right text-sm leading-none truncate rounded px-0.5 -mx-0.5 ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500" : "font-medium text-slate-700 hover:bg-slate-100"} ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
+                            className={`block w-full text-right text-sm leading-none truncate rounded px-0.5 -mx-0.5 font-medium text-slate-700 hover:bg-slate-100 ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
                             title={isHighlight ? "클릭 시 하이라이트 해제" : `${p.name} 클릭 시 이 선수 경기만 하이라이트 (같은 줄 왼쪽=파트너, 오른쪽=상대)`}
                           >
-                            <span className="inline-flex items-center gap-1 truncate">
-                              <span>{p.name} <span className={isHighlight ? "text-amber-900/80 font-semibold" : "text-slate-500 font-normal"}>({p.gender === "M" ? "남" : "여"} {p.grade})</span></span>
+                            <span className={`tracking-tighter inline-flex items-center gap-0 truncate text-sm justify-end ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500 rounded px-0.5" : ""}`} style={{ letterSpacing: "-0.02em" }}>
+                              {p.name}
+                              <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={p.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={p.linkedUid ? "연동" : "비연동"}>
+                                <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{p.linkedUid ? "🔃" : "⏸️"}</span>
+                              </span>
+                              <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: p.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
+                                <span className="inline-block">{p.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
+                                <span className="inline-block leading-none align-middle text-black">{p.grade}</span>
+                              </span>
                             </span>
                           </button>
                         );
@@ -2795,10 +3094,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         <span className="text-xs font-medium text-slate-800">{rank}</span>
                       )}
                     </span>
-                    <div className="flex-1 min-w-0 flex items-center gap-1.5 leading-tight">
-                      <span className="font-medium text-slate-800 text-sm">{m.name}</span>
-                      <span className="text-slate-400 text-xs">{m.gender === "M" ? "남" : m.gender === "F" ? "여" : "-"}</span>
-                      <span className="text-slate-500 text-xs">{m.grade}</span>
+                    <div className="flex-1 min-w-0 flex items-center gap-0 leading-tight">
+                      <span className="tracking-tighter inline-flex items-center gap-0 font-medium text-slate-800 text-sm" style={{ letterSpacing: "-0.02em" }}>
+                        {m.name}
+                        <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={m.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={m.linkedUid ? "연동" : "비연동"}>
+                          <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{m.linkedUid ? "🔃" : "⏸️"}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: m.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
+                          <span className="inline-block">{m.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
+                          <span className="inline-block leading-none align-middle text-black">{m.grade}</span>
+                        </span>
+                      </span>
                     </div>
                     <div className="text-right text-xs text-slate-600 leading-tight">
                       <span className="font-medium text-slate-700">{m.wins}승</span>
@@ -2850,14 +3156,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   <button
                     type="button"
                     onClick={async () => {
-                      if (isPhoneAuthAvailable() && getCurrentPhoneUser()) {
-                        await signOutPhone();
-                        setMyInfo((prev) => ({ ...prev, phoneNumber: undefined }));
-                      }
-                      if (isEmailAuthAvailable() && getCurrentEmailUser()) {
-                        await signOutEmail();
-                        setMyInfo((prev) => ({ ...prev, email: undefined }));
-                      }
+                      if (isPhoneAuthAvailable() && getCurrentPhoneUser()) await signOutPhone();
+                      if (isEmailAuthAvailable() && getCurrentEmailUser()) await signOutEmail();
+                      setMyInfo((prev) => {
+                        const next = { ...prev, phoneNumber: undefined, email: undefined, uid: undefined };
+                        saveMyInfo(next);
+                        return next;
+                      });
                       if (typeof window !== "undefined") {
                         sessionStorage.removeItem(LOGIN_GATE_KEY);
                         setLoginGatePassed(false);
@@ -2871,7 +3176,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
             ) : null}
 
-            {/* 나의 프로필 (로그인 시): 요약 + 프로필 수정 뱃지 → 클릭 시 상세 폼 */}
+            {/* 프로필 = 이름 + 성별기호 + 급수기호. 나의 프로필 (로그인 시): 요약 + 프로필 수정 → 클릭 시 상세 폼 */}
             {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
               <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
                 <div className="px-2.5 py-2 border-b border-[#e8e8ed]">
@@ -2879,21 +3184,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </div>
                 <div className="px-2.5 py-2 space-y-2">
                   <div className="flex items-center gap-2 p-1.5 rounded-xl bg-slate-50 border border-slate-100">
-                    <ProfileBadge
-                      profileImageUrl={myInfo.profileImageUrl}
-                      name={myInfo.name ?? ""}
-                      gender={myInfo.gender ?? "M"}
-                      grade={myInfo.grade ?? "D"}
-                      size="md"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-800 truncate">
+                    <p className="min-w-0 flex-1 text-sm font-medium text-slate-800 truncate">
+                      <span className="tracking-tighter inline-flex items-center gap-0" style={{ letterSpacing: "-0.02em" }}>
                         {myInfo.name || "이름 없음"}
-                        <span className="text-slate-600 font-normal ml-1">{myInfo.gender === "F" ? "여" : "남"}</span>
-                        <span className="text-slate-600 font-normal ml-1">{myInfo.grade ?? "D"}</span>
-                      </p>
-                      {myInfo.birthDate && <p className="text-xs text-slate-500">생년월일 {myInfo.birthDate}</p>}
-                    </div>
+                        <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={myInfo.uid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={myInfo.uid ? "연동" : "비연동"}>
+                          <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{myInfo.uid ? "🔃" : "⏸️"}</span>
+                        </span>
+                        <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: myInfo.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
+                          <span className="inline-block">{myInfo.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
+                          <span className="inline-block leading-none align-middle text-black">{myInfo.grade ?? "D"}</span>
+                        </span>
+                      </span>
+                    </p>
                     <button
                       type="button"
                       onClick={() => setProfileEditOpen(true)}
@@ -2919,7 +3221,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {/* 프로필 수정 (경기 이사 섹션 하위 창) */}
             {(profileEditOpen || profileEditClosing) && (
         <div
-          className="fixed inset-0 z-30 bg-[var(--background)] flex flex-col max-w-md mx-auto left-0 right-0"
+          className="fixed inset-0 z-30 bg-[var(--background)] flex flex-col max-w-md mx-auto left-0 right-0 min-h-dvh"
           style={{
             animation: profileEditClosing
               ? "slideOutToLeftOverlay 0.25s cubic-bezier(0.32, 0.72, 0, 1) forwards"
@@ -2948,7 +3250,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </button>
             <h2 className="text-sm font-semibold text-slate-800 flex-1 text-center pr-12">프로필 수정</h2>
           </header>
-          <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-2">
+          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide-y px-2.5 py-3 space-y-2" data-scrollbar-hide style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
             <div className="grid gap-1.5">
               <div className="flex items-center gap-1.5">
                 <label className="text-xs font-medium text-slate-600 shrink-0 w-28">이름</label>
@@ -3000,7 +3302,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </select>
               </div>
               <div className="flex items-center gap-1.5">
-                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">전화번호 (연락처)</label>
+                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">전화번호</label>
                 <input
                   type="tel"
                   value={myInfo.phoneNumber ?? ""}
@@ -3027,38 +3329,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="생년월일"
                 />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <label className="text-xs font-medium text-slate-600 shrink-0 w-28">프로필 사진</label>
-                <label className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-white text-sm text-slate-700 hover:bg-slate-50 cursor-pointer btn-tap">
-                  <span>📷</span>
-                  <span>파일 선택</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="sr-only"
-                    aria-label="프로필 사진 파일 선택"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const maxKB = 200;
-                      if (file.size > maxKB * 1024) {
-                        alert(`파일이 너무 큽니다. ${maxKB}KB 이하로 줄여 주세요.`);
-                        return;
-                      }
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const dataUrl = reader.result as string;
-                        const next = { ...myInfo, profileImageUrl: dataUrl };
-                        setMyInfo(next);
-                        saveMyInfo(next);
-                      };
-                      reader.readAsDataURL(file);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                <span className="text-xs text-slate-500">200KB 이하 권장</span>
               </div>
               <div className="flex items-center gap-1.5 mt-2">
                 <span className="shrink-0 w-28" />
@@ -3147,7 +3417,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }}
           >
             <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
-              적용하면 현재 경기 명단 기준으로 경기 현황이 다시 생성됩니다. 지금까지 입력한 경기 결과·설정이 모두 변경됩니다. 계속하시겠습니까?
+              현재 진행중인 경기 현황을 초기화가 됩니다. 진행하시겠습니까?
             </p>
             <div className="flex gap-2 justify-end">
               <button

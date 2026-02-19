@@ -5,29 +5,39 @@ import { useState } from "react";
 type Grade = "A" | "B" | "C" | "D";
 
 export interface ProfileBadgeProps {
-  /** 프로필 이미지 URL (없으면 이름 첫 글자) */
+  /** 아바타 뱃지: 프로필 이미지 URL (없으면 이름 첫 글자) */
   profileImageUrl?: string;
   /** 이름 (이니셜·대체 텍스트용) */
   name: string;
   gender: "M" | "F";
   grade: Grade;
-  /** 크기: md(나의 프로필과 동일), sm(표·목록용) */
-  size?: "md" | "sm";
+  /** 크기: md(나의 프로필), sm(표·목록), xs(명단 등 더 작게) */
+  size?: "md" | "sm" | "xs";
   className?: string;
 }
 
-/** 기준 비율: 메인 원 48px, 급수·성별 뱃지 16px(원 직경의 1/3). sm은 동일 비율로 scale만 적용 */
+/** 기준 비율: 메인 원 48px. sm은 동일 비율로 scale만 적용 */
 const BASE_SIZE = 48; // px
-const BADGE_SIZE = 16; // 원 대비 1/3
 
-/** 경기 이사 '나의 프로필'과 동일한 조합: 프로필 사진(또는 이니셜) + 급수 뱃지 + 성별 뱃지. 비율 고정. */
+/** 성별 기호: 이모지 스타일 천문 기호 (♀️ Venus, ♂️ Mars) */
+const GENDER_SYMBOL = { F: "\u2640\uFE0F", M: "\u2642\uFE0F" } as const;
+
+/** 급수 기호: 네거티브 스퀘어(네모에 알파벳) 🅰🅱🅲🅳 */
+const GRADE_EMOJI: Record<Grade, string> = { A: "🅰", B: "🅱", C: "🅲", D: "🅳" };
+
+/** 성별·급수 동일 색상 (남=파랑, 여=분홍) */
+const GENDER_COLOR = { M: "#2563eb", F: "#ec4899" } as const;
+
+/** 아바타 뱃지: 프로필 원 + 성별·급수 기호(12시 방향). 경기 이사 나의 프로필 등에서 사용 */
 export function ProfileBadge({ profileImageUrl, name, gender, grade, size = "md", className }: ProfileBadgeProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const isSm = size === "sm";
+  const isXs = size === "xs";
+  const symbolLabel = `${GENDER_SYMBOL[gender]}${GRADE_EMOJI[grade]}`;
 
   const inner = (
     <>
-      <span className="relative w-12 h-12 rounded-full overflow-hidden bg-slate-200 ring-2 ring-white shadow flex items-center justify-center box-border border-2 border-dashed border-amber-400">
+      <span className="relative flex-shrink-0 w-12 h-12 rounded-full overflow-hidden bg-slate-200 shadow flex items-center justify-center box-border">
         {profileImageUrl && !imgFailed ? (
           <img
             src={profileImageUrl}
@@ -42,24 +52,30 @@ export function ProfileBadge({ profileImageUrl, name, gender, grade, size = "md"
           </span>
         )}
       </span>
-      {/* 성별 뱃지 중심: 프로필 원 둘레 위 (우하단 45°, 반지름 24 기준 정확 좌표) */}
+      {/* 아바타 뱃지 기호: 12시 방향, 성별·급수 동일 색상·크기 */}
       <span
-        className={`absolute w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full flex items-center justify-center text-white text-xs font-semibold leading-none shadow ${gender === "F" ? "bg-red-500" : "bg-[#0071e3]"}`}
-        style={{ left: "40.97px", top: "40.97px" }}
+        className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 min-w-[2rem] px-1.5 py-0.5 flex items-center justify-center gap-0 font-black leading-none text-lg tracking-tighter"
+        style={{ color: GENDER_COLOR[gender], WebkitTextStroke: "0.4px currentColor", letterSpacing: "-0.08em" }}
         aria-hidden
       >
-        {gender === "F" ? "♀" : "♂"}
-      </span>
-      {/* 급수 뱃지 중심: 프로필 원 둘레 위 (좌하단 방향, 135°) */}
-      <span
-        className="absolute left-[7px] top-[41px] min-w-[1rem] h-4 -translate-x-1/2 -translate-y-1/2 px-1 rounded-full bg-slate-600 flex items-center justify-center text-white text-xs font-semibold leading-none shadow"
-        aria-hidden
-      >
-        {grade}
+        <span className="inline-block">{GENDER_SYMBOL[gender]}</span>
+        <span className="inline-block align-middle leading-none" style={{ transform: "scale(1.3)", color: "inherit" }}>{GRADE_EMOJI[grade]}</span>
       </span>
     </>
   );
 
+  if (isXs) {
+    return (
+      <span className={`relative flex-shrink-0 inline-block w-[18px] h-[18px] overflow-visible ${className ?? ""}`}>
+        <span
+          className="relative block overflow-visible"
+          style={{ width: BASE_SIZE, height: BASE_SIZE, transform: "scale(0.375)", transformOrigin: "top left" }}
+        >
+          {inner}
+        </span>
+      </span>
+    );
+  }
   if (isSm) {
     return (
       <span className={`relative flex-shrink-0 inline-block w-6 h-6 overflow-visible ${className ?? ""}`}>

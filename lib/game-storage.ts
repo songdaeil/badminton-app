@@ -36,6 +36,8 @@ export interface MyInfo {
   phoneNumber?: string;
   /** 생년월일 YYYY-MM-DD */
   birthDate?: string;
+  /** Firebase Auth UID. 로그인 시 프로필에 내포 → 경기 명단 '프로필로 나 추가' 시 이 UID로 연동(linkedUid) */
+  uid?: string;
 }
 
 const MYINFO_KEY = "badminton-myinfo";
@@ -58,6 +60,7 @@ export function loadMyInfo(): MyInfo {
         email: typeof p.email === "string" ? p.email : undefined,
         phoneNumber: typeof p.phoneNumber === "string" ? p.phoneNumber : undefined,
         birthDate: typeof p.birthDate === "string" ? p.birthDate : undefined,
+        uid: typeof p.uid === "string" ? p.uid : undefined,
       };
     }
   } catch {}
@@ -72,6 +75,7 @@ export function saveMyInfo(info: MyInfo): void {
   if (info.email) payload.email = info.email;
   if (info.phoneNumber) payload.phoneNumber = info.phoneNumber;
   if (info.birthDate) payload.birthDate = info.birthDate;
+  if (info.uid) payload.uid = info.uid;
   localStorage.setItem(MYINFO_KEY, JSON.stringify(payload));
 }
 
@@ -92,6 +96,8 @@ export interface GameData {
   createdBy?: string | null;
   /** 경기을 만든 사람 이름 (멤버가 비어 있을 때 표시용) */
   createdByName?: string | null;
+  /** 최초 생성자 유니크 ID (Firebase UID). 누가 최초로 만들었는지 구분용 */
+  createdByUid?: string | null;
   /** 진행으로 체크된 매치 id 목록 (목록 나갔다 와도 유지) */
   playingMatchIds?: string[] | null;
   /** 이 경기를 불러올 때 사용한 공유 쿼리(?share=xxx). 동일 링크 재진입 시 중복 추가 방지용 */
@@ -133,21 +139,9 @@ export function removeGameFromList(gameId: string): void {
   localStorage.removeItem(getGameStorageKey(gameId));
 }
 
-const DEFAULT_MEMBERS: Member[] = [
-  { id: "1", name: "김철수", gender: "M", grade: "A", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "2", name: "이영희", gender: "F", grade: "A", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "3", name: "박민수", gender: "M", grade: "B", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "4", name: "최지연", gender: "F", grade: "B", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "5", name: "정대호", gender: "M", grade: "C", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "6", name: "한소희", gender: "F", grade: "C", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "7", name: "강동원", gender: "M", grade: "D", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "8", name: "윤서준", gender: "M", grade: "D", wins: 0, losses: 0, pointDiff: 0 },
-  { id: "9", name: "임하늘", gender: "F", grade: "B", wins: 0, losses: 0, pointDiff: 0 },
-];
-
 export function loadGame(gameId: string | null): GameData {
   if (typeof window === "undefined") {
-    return { members: DEFAULT_MEMBERS, matches: [], gameMode: undefined, gameSettings: { ...DEFAULT_GAME_SETTINGS }, myProfileMemberId: undefined };
+    return { members: [], matches: [], gameMode: undefined, gameSettings: { ...DEFAULT_GAME_SETTINGS }, myProfileMemberId: undefined };
   }
   const key = getGameStorageKey(gameId);
   try {
@@ -157,7 +151,7 @@ export function loadGame(gameId: string | null): GameData {
       if (parsed && Array.isArray(parsed.members) && Array.isArray(parsed.matches)) {
         const settings = parsed.gameSettings;
         return {
-          members: parsed.members.length > 0 ? parsed.members : DEFAULT_MEMBERS,
+          members: parsed.members,
           matches: parsed.matches ?? [],
           gameName: typeof parsed.gameName === "string" ? parsed.gameName : undefined,
           gameMode: parsed.gameMode,
@@ -173,6 +167,7 @@ export function loadGame(gameId: string | null): GameData {
           createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : undefined,
           createdBy: typeof parsed.createdBy === "string" ? parsed.createdBy : undefined,
           createdByName: typeof parsed.createdByName === "string" ? parsed.createdByName : undefined,
+          createdByUid: typeof parsed.createdByUid === "string" ? parsed.createdByUid : undefined,
           playingMatchIds: Array.isArray(parsed.playingMatchIds) && parsed.playingMatchIds.every((x) => typeof x === "string") ? parsed.playingMatchIds : undefined,
           importedFromShare: typeof parsed.importedFromShare === "string" ? parsed.importedFromShare : undefined,
           shareId: typeof parsed.shareId === "string" ? parsed.shareId : undefined,
@@ -192,7 +187,7 @@ export function loadGame(gameId: string | null): GameData {
       }
     } catch {}
   }
-  return { members: DEFAULT_MEMBERS, matches: [], gameMode: undefined, gameSettings: { ...DEFAULT_GAME_SETTINGS }, myProfileMemberId: undefined };
+  return { members: [], matches: [], gameMode: undefined, gameSettings: { ...DEFAULT_GAME_SETTINGS }, myProfileMemberId: undefined };
 }
 
 export function saveGame(gameId: string | null, data: GameData): void {
@@ -210,6 +205,7 @@ export function saveGame(gameId: string | null, data: GameData): void {
       createdAt: data.createdAt ?? null,
       createdBy: data.createdBy ?? null,
       createdByName: data.createdByName ?? null,
+      createdByUid: data.createdByUid ?? null,
       playingMatchIds: data.playingMatchIds ?? null,
       importedFromShare: data.importedFromShare ?? null,
       shareId: data.shareId ?? null,

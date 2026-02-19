@@ -103,6 +103,27 @@ head div {
   font-variant-numeric: tabular-nums;
 }
 
+/* 세로 스크롤바 숨김 (스크롤은 가능) */
+.scrollbar-hide-y,
+[data-scrollbar-hide] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+.scrollbar-hide-y::-webkit-scrollbar,
+[data-scrollbar-hide]::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+.scrollbar-hide-y::-webkit-scrollbar-track,
+.scrollbar-hide-y::-webkit-scrollbar-thumb,
+[data-scrollbar-hide]::-webkit-scrollbar-track,
+[data-scrollbar-hide]::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
+}
+
 /* 액션 시 애니메이션 */
 @keyframes fadeIn {
   from { opacity: 0; }
