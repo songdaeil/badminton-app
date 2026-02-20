@@ -68,11 +68,21 @@ export function useGameListSync(
 
   const applyResolvedList = useCallback(
     (resolved: GameListEntry[]) => {
+      const localIdsBefore = loadGameList();
+      const resolvedShareIds = new Set(resolved.map((e) => e.shareId).filter((s): s is string => !!s));
+      const toSubscribe: GameListEntry[] = [...resolved];
+      for (const id of localIdsBefore) {
+        const shareId = loadGame(id)?.shareId;
+        if (shareId && !resolvedShareIds.has(shareId)) {
+          resolvedShareIds.add(shareId);
+          toSubscribe.push({ id, shareId });
+        }
+      }
       saveGameList(resolved.map((e) => e.id));
       onListChange();
       unsubSharedRef.current.forEach((u) => u());
       unsubSharedRef.current = [];
-      resolved.forEach((e) => {
+      toSubscribe.forEach((e) => {
         if (!e.shareId) return;
         const unsub = subscribeSharedGame(e.shareId, (data) => {
           saveGame(e.id, { ...data, shareId: e.shareId ?? undefined });
@@ -90,6 +100,29 @@ export function useGameListSync(
     },
     [applyResolvedList]
   );
+
+  /** 현재 로컬 목록 기준으로 공유 경기(shareId) 구독만 갱신. 목록 저장은 하지 않음. 탭 포커스 시 실시간 동기화 복구용 */
+  const ensureSubscriptionsForCurrentList = useCallback(() => {
+    if (!isSyncAvailable()) return;
+    const ids = loadGameList();
+    const entries: GameListEntry[] = ids
+      .map((id) => ({ id, shareId: loadGame(id)?.shareId ?? null }))
+      .filter((e): e is GameListEntry & { shareId: string } => !!e.shareId);
+    if (entries.length === 0) {
+      unsubSharedRef.current.forEach((u) => u());
+      unsubSharedRef.current = [];
+      return;
+    }
+    unsubSharedRef.current.forEach((u) => u());
+    unsubSharedRef.current = [];
+    entries.forEach((e) => {
+      const unsub = subscribeSharedGame(e.shareId, (data) => {
+        saveGame(e.id, { ...data, shareId: e.shareId });
+        onListChange();
+      });
+      if (unsub) unsubSharedRef.current.push(unsub);
+    });
+  }, [onListChange]);
 
   useEffect(() => {
     if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
@@ -135,12 +168,20 @@ export function useGameListSync(
 
     const unsub = subscribeUserGameList(authUid, handleServerList, () => {});
 
+    const onFocus = () => ensureSubscriptionsForCurrentList();
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", onFocus);
+    }
+
     return () => {
       unsub?.();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", onFocus);
+      }
       unsubSharedRef.current.forEach((u) => u());
       unsubSharedRef.current = [];
     };
-  }, [authUid, handleServerList, applyResolvedList]);
+  }, [authUid, handleServerList, applyResolvedList, ensureSubscriptionsForCurrentList]);
 
   const syncGameListToFirebase = useCallback(
     (opts?: { added?: string; removed?: string }) => {

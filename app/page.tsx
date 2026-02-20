@@ -2113,7 +2113,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </div>
           )}
           <div
-            className="flex min-h-0 flex-1"
+            className="flex min-h-0 flex-1 h-full overflow-hidden"
             style={{
               width: carouselViewportWidth > 0 ? carouselViewportWidth * 3 : "300%",
               transform: carouselViewportWidth > 0
@@ -2126,7 +2126,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {/* 패널 0: 경기 방식 */}
             <div
               ref={(el) => { panelScrollRefs.current[0] = el; }}
-              className="shrink-0 min-h-full overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
+              className="shrink-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 touch-pan-y"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
@@ -2302,7 +2302,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {/* 패널 1: 경기 목록 */}
             <div
               ref={(el) => { panelScrollRefs.current[1] = el; }}
-              className="shrink-0 min-h-full overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
+              className="shrink-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative touch-pan-y"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
@@ -2311,9 +2311,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
         <div key="record-wrap" className="relative pt-4 min-h-[70vh]">
         {!selectedGameId && (
-        /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시. key는 고정해 갱신 시 카드가 통째로 팅겨 오르는 애니 재생 방지 */
+        /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시(공유 경기 실시간 동기화 반영). key는 고정해 갱신 시 카드가 통째로 팅겨 오르는 애니 재생 방지 */
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
+            void listRefreshKey;
             const gameIds = loadGameList();
             const sortedIds = [...gameIds].sort((a, b) => {
               const tA = loadGame(a).createdAt ?? "";
@@ -3213,7 +3214,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {/* 패널 2: 경기 이사 */}
             <div
               ref={(el) => { panelScrollRefs.current[2] = el; }}
-              className="shrink-0 min-h-full overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
+              className="shrink-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 touch-pan-y"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
