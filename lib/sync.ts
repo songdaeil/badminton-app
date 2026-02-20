@@ -6,9 +6,13 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
+  query,
+  runTransaction,
   serverTimestamp,
   setDoc,
+  where,
 } from "firebase/firestore";
 import type { GameData } from "@/lib/game-storage";
 import { ensureFirebase, getDb } from "@/lib/firebase";
@@ -80,6 +84,7 @@ export async function addSharedGame(data: GameData): Promise<string | null> {
     const docRef = await addDoc(colRef, {
       gameData: payload,
       updatedAt: serverTimestamp(),
+      createdByUid: data.createdByUid ?? null,
     });
     return docRef.id;
   } catch (e) {
@@ -102,6 +107,7 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
     await setDoc(ref, {
       gameData: payload,
       updatedAt: serverTimestamp(),
+      createdByUid: data.createdByUid ?? null,
     });
     return true;
   } catch (e) {
@@ -122,6 +128,47 @@ export async function deleteSharedGame(shareId: string): Promise<boolean> {
   } catch (e) {
     console.error("[Firebase] deleteSharedGame 실패:", e);
     return false;
+  }
+}
+
+/** sharedGames 컬렉션에서 해당 UID가 만든 문서 id(shareId) 목록 조회.
+ * 최상위 createdByUid가 없는 기존 문서는 gameData.createdByUid로 찾고, 한 번 최상위 필드를 채워 둠. */
+export async function getSharedGameIdsByUid(uid: string): Promise<string[]> {
+  const ok = await ensureFirebase();
+  const db = getDb();
+  if (!ok || !db) return [];
+  try {
+    const colRef = collection(db, COLLECTION);
+    const q = query(colRef, where("createdByUid", "==", uid));
+    const snap = await getDocs(q);
+    const fromQuery = snap.docs.map((d) => d.id);
+    if (fromQuery.length > 0) return fromQuery;
+
+    // 쿼리 결과가 없으면 기존 문서(최상위 createdByUid 없음)일 수 있음 → gameData 내부로 폴백
+    const allSnap = await getDocs(colRef);
+    const matched: { id: string; needsMigration: boolean }[] = [];
+    for (const d of allSnap.docs) {
+      const data = d.data();
+      const topUid = data.createdByUid;
+      const innerUid = data?.gameData && typeof data.gameData === "object" ? (data.gameData as { createdByUid?: string }).createdByUid : undefined;
+      const isMatch = topUid === uid || innerUid === uid;
+      if (!isMatch) continue;
+      matched.push({ id: d.id, needsMigration: topUid === undefined || topUid === null });
+    }
+    const ids = matched.map((m) => m.id);
+    for (const { id, needsMigration } of matched) {
+      if (needsMigration) {
+        try {
+          await setDoc(doc(db, COLLECTION, id), { createdByUid: uid }, { merge: true });
+        } catch {
+          // 무시: 다음 로드 시 다시 시도됨
+        }
+      }
+    }
+    return ids;
+  } catch (e) {
+    console.error("[Firebase] getSharedGameIdsByUid 실패:", e);
+    return [];
   }
 }
 
@@ -159,6 +206,40 @@ export async function setUserGameList(uid: string, entries: GameListEntry[]): Pr
     return true;
   } catch (e) {
     console.error("[Firebase] setUserGameList 실패:", e);
+    return false;
+  }
+}
+
+function parseListFromDoc(data: unknown): GameListEntry[] {
+  if (!data || typeof data !== "object") return [];
+  const list = (data as { list?: unknown }).list;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((e: unknown) => e && typeof e === "object" && typeof (e as { id?: unknown }).id === "string")
+    .map((e: { id: string; shareId?: string | null }) => ({
+      id: e.id,
+      shareId: typeof e.shareId === "string" ? e.shareId : null,
+    }));
+}
+
+/** UID별 경기 목록을 트랜잭션으로 읽고, 전달한 목록과 id 기준 병합 후 저장. 동시에 두 기기가 써도 항목이 사라지지 않음. */
+export async function mergeUserGameList(uid: string, entries: GameListEntry[]): Promise<boolean> {
+  const ok = await ensureFirebase();
+  const db = getDb();
+  if (!ok || !db) return false;
+  try {
+    const ref = doc(db, USER_GAME_LIST_COLLECTION, uid);
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(ref);
+      const current = snap.exists() ? parseListFromDoc(snap.data()) : [];
+      const byId = new Map<string, GameListEntry>(current.map((e) => [e.id, e]));
+      for (const e of entries) byId.set(e.id, e);
+      const merged = Array.from(byId.values());
+      transaction.set(ref, { list: merged, updatedAt: serverTimestamp() });
+    });
+    return true;
+  } catch (e) {
+    console.error("[Firebase] mergeUserGameList 실패:", e);
     return false;
   }
 }

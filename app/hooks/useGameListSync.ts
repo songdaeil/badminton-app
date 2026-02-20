@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
-import { loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
+import { createGameId, loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
 import {
   getSharedGame,
+  getSharedGameIdsByUid,
   getUserGameList,
   isSyncAvailable,
+  mergeUserGameList,
   setUserGameList,
   subscribeUserGameList,
 } from "@/lib/sync";
@@ -48,10 +50,56 @@ export function useGameListSync(
         }
       });
     };
-    getUserGameList(authUid).then(applyList).catch(() => {});
+    getUserGameList(authUid)
+      .then((remote) => {
+        const localIds = loadGameList();
+        const remoteMap = new Map(remote.map((e) => [e.id, e]));
+        const merged: GameListEntry[] = [];
+        for (const id of localIds) {
+          merged.push(remoteMap.get(id) ?? { id, shareId: loadGame(id).shareId ?? null });
+          remoteMap.delete(id);
+        }
+        for (const e of remoteMap.values()) merged.push(e);
+        mergeUserGameList(authUid, merged).then((ok) => {
+          if (ok) getUserGameList(authUid).then(applyList).catch(() => applyList(merged));
+          else applyList(remote);
+        }).catch(() => applyList(remote));
+      })
+      .catch(() => {});
+    getSharedGameIdsByUid(authUid)
+      .then((shareIds) => {
+        const existingShareIds = new Set(
+          loadGameList().map((id) => loadGame(id).shareId).filter((s): s is string => !!s)
+        );
+        const toAdd = shareIds.filter((s) => !existingShareIds.has(s));
+        if (toAdd.length === 0) return;
+        Promise.all(
+          toAdd.map((shareId) =>
+            getSharedGame(shareId).then((data) => {
+              if (!data) return null;
+              const newId = createGameId();
+              saveGame(newId, { ...data, shareId });
+              return newId;
+            })
+          )
+        ).then((newIds) => {
+          const added = newIds.filter((n): n is string => n != null);
+          if (added.length === 0) return;
+          const prev = loadGameList();
+          saveGameList([...prev, ...added]);
+          const toMerge: GameListEntry[] = [...prev, ...added].map((id) => ({
+            id,
+            shareId: loadGame(id).shareId ?? null,
+          }));
+          mergeUserGameList(authUid, toMerge).then((ok) => {
+            if (ok) onListChange();
+          });
+        });
+      })
+      .catch(() => {});
     const unsub = subscribeUserGameList(authUid, applyList, () => {});
     return () => unsub?.();
-  }, [authUid, onListChange]);
+  }, [authUid, onListChange, applyMerged]);
 
   const syncGameListToFirebase = useCallback(
     (opts?: { added?: string; removed?: string }) => {
@@ -65,33 +113,23 @@ export function useGameListSync(
       }
       if (opts?.added != null) {
         const addedId: string = opts.added;
-        getUserGameList(authUid).then((remote) => {
-          if (remote.some((e) => e.id === addedId)) {
-            applyMerged(remote);
-            return;
+        const toAdd: GameListEntry = { id: addedId, shareId: loadGame(addedId).shareId ?? null };
+        mergeUserGameList(authUid, [toAdd]).then((ok) => {
+          if (ok) {
+            getUserGameList(authUid).then(applyMerged).catch(() => {});
           }
-          const merged: GameListEntry[] = [
-            ...remote,
-            { id: addedId, shareId: loadGame(addedId).shareId ?? null },
-          ];
-          setUserGameList(authUid, merged).then((ok) => {
-            if (ok) applyMerged(merged);
-          }).catch(() => {});
         }).catch(() => {});
         return;
       }
-      getUserGameList(authUid).then((remote) => {
-        const localIds = loadGameList();
-        const remoteMap = new Map(remote.map((e) => [e.id, e]));
-        const merged: GameListEntry[] = [];
-        for (const id of localIds) {
-          merged.push(remoteMap.get(id) ?? { id, shareId: loadGame(id).shareId ?? null });
-          remoteMap.delete(id);
+      const localIds = loadGameList();
+      const toMerge: GameListEntry[] = localIds.map((id) => ({
+        id,
+        shareId: loadGame(id).shareId ?? null,
+      }));
+      mergeUserGameList(authUid, toMerge).then((ok) => {
+        if (ok) {
+          getUserGameList(authUid).then(applyMerged).catch(() => {});
         }
-        for (const e of remoteMap.values()) merged.push(e);
-        setUserGameList(authUid, merged).then((ok) => {
-          if (ok) applyMerged(merged);
-        }).catch(() => {});
       }).catch(() => {});
     },
     [authUid, applyMerged]

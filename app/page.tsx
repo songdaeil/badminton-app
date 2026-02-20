@@ -28,6 +28,7 @@ import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
+import { useGameListSync } from "@/app/hooks/useGameListSync";
 /** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
 function encodeGameForShare(data: GameData): string {
   const payload = {
@@ -552,6 +553,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }, [scoreInputs]);
   /** 경기 목록에서 공유(shareId) 카드 최신 데이터 갱신 후 리스트 다시 그리기용 */
   const [listRefreshKey, setListRefreshKey] = useState(0);
+  const { syncGameListToFirebase, refreshListFromRemote } = useGameListSync(
+    authUid,
+    useCallback(() => setListRefreshKey((k) => k + 1), [])
+  );
   /** 터치 스와이프·당겨서 새로고침: 당긴 거리(px), 새로고침 중 여부 */
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -777,6 +782,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           shareId: share,
         });
         addGameToList(newId);
+        syncGameListToFirebase({ added: newId });
         setNavView("record");
         setSelectedGameId(null);
         router.replace("/?view=record");
@@ -800,6 +806,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         importedFromShare: share,
       });
       addGameToList(newId);
+      syncGameListToFirebase({ added: newId });
       setNavView("record");
       setSelectedGameId(null);
       router.replace("/?view=record");
@@ -821,12 +828,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
         importedFromShare: share,
       });
       addGameToList(newId);
+      syncGameListToFirebase({ added: newId });
       setNavView("record");
       setSelectedGameId(null);
       router.replace("/?view=record");
       passGateFromShare();
     });
-  }, [searchParams, router, gameId]);
+  }, [searchParams, router, gameId, syncGameListToFirebase]);
 
   /** 경기 목록 탭에서 공유(shareId) 경기 카드를 Firestore 최신 데이터로 갱신 → 카드가 항상 최신으로 동기화 표시. 진입 시 1회 + 25초마다 갱신 */
   useEffect(() => {
@@ -934,7 +942,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       /* 경기 방식: 로컬 설정만 있음, 재렌더로 충분 */
     }
     if (navView === "record") {
-      setListRefreshKey((k) => k + 1);
+      refreshListFromRemote();
     }
     if (navView === "myinfo" && authUid) {
       getRemoteProfile(authUid).then((remote) => {
@@ -952,7 +960,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         }
       });
     }
-  }, [navView, authUid]);
+  }, [navView, authUid, refreshListFromRemote]);
 
   const handleCarouselTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -1167,6 +1175,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
     saveGame(id, payload);
     addGameToList(id);
+    syncGameListToFirebase({ added: id });
     if (creatorUid && isSyncAvailable()) {
       addSharedGame(payload)
         .then((newId) => {
@@ -1179,7 +1188,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     }
     setSelectedGameId(null);
     setNavView("record");
-  }, [gameModeId, myProfileMemberId, members, myInfo.name]);
+  }, [gameModeId, myProfileMemberId, members, myInfo.name, syncGameListToFirebase]);
 
   const handleShareGame = useCallback(() => {
     if (effectiveGameId === null) return;
@@ -1201,16 +1210,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
     router.push(`/game/${id}`);
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, router]);
 
-  /** 목록 카드에서 해당 경기 삭제. Firestore에 공유된 경기면 원격 문서도 삭제. 삭제 후 경기 목록 섹션에 머물고 상세로 이동하지 않음 */
+  /** 목록 카드에서 해당 경기 삭제. Firestore에 공유된 경기면 원격 문서도 삭제. UID 기준 경기 목록 동기화에도 반영. */
   const handleDeleteCard = useCallback((gameId: string) => {
     const data = loadGame(gameId);
     if (data.shareId && isSyncAvailable()) {
       deleteSharedGame(data.shareId).catch(() => {});
     }
     removeGameFromList(gameId);
+    syncGameListToFirebase({ removed: gameId });
     setSelectedGameId(null);
     setListMenuOpenId(null);
-  }, []);
+  }, [syncGameListToFirebase]);
 
   /** 목록 카드에서 해당 경기 복사: 경기 명단 단계까지만 복사, 경기 현황은 제외 → 복사 후 명단 재편집·경기 생성 가능 */
   const handleCopyCard = useCallback((gameId: string) => {
@@ -1232,6 +1242,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
     saveGame(newId, payload);
     addGameToList(newId);
+    syncGameListToFirebase({ added: newId });
     if (creatorUid && isSyncAvailable()) {
       addSharedGame(payload)
         .then((shareId) => {
@@ -1244,7 +1255,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     }
     setListMenuOpenId(null);
     setSelectedGameId(null);
-  }, [myInfo.name]);
+  }, [myInfo.name, syncGameListToFirebase]);
 
   /** 경기 목록 카드에서 공유: ensureFirebase()·getDb() 호출 후 Firestore sharedGames에 addDoc(신규) 또는 setDoc(기존), shareId 링크 복사 */
   const handleShareCard = useCallback(async (targetGameId: string) => {
