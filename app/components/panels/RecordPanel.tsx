@@ -291,7 +291,7 @@ export function RecordPanel() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setListMenuOpenId((prev) => (prev === id ? null : id));
+                            setListMenuOpenId(listMenuOpenId === id ? null : id);
                           }}
                           className="p-1 rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                           aria-label="메뉴"
