@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { createGameId, loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
 import {
   getSharedGame,
@@ -9,15 +9,53 @@ import {
   isSyncAvailable,
   mergeUserGameList,
   setUserGameList,
+  subscribeSharedGame,
   subscribeUserGameList,
 } from "@/lib/sync";
 import type { GameListEntry } from "@/lib/sync";
 
+function dedupeByShareId(entries: GameListEntry[]): GameListEntry[] {
+  const seen = new Set<string>();
+  return entries.filter((e) => {
+    if (e.shareId) {
+      if (seen.has(e.shareId)) return false;
+      seen.add(e.shareId);
+    }
+    return true;
+  });
+}
+
+/** 서버 목록을 로컬 id로 해석: shareId별 로컬 id 매핑, 없으면 fetch 후 생성. 중복 id 제거. */
+async function resolveToLocalEntries(entries: GameListEntry[]): Promise<GameListEntry[]> {
+  const deduped = dedupeByShareId(entries);
+  const result: GameListEntry[] = [];
+  const seenLocalId = new Set<string>();
+  for (const e of deduped) {
+    if (e.shareId) {
+      let localId = loadGameList().find((id) => loadGame(id).shareId === e.shareId);
+      if (!localId) {
+        const data = await getSharedGame(e.shareId);
+        if (!data) continue;
+        localId = createGameId();
+        saveGame(localId, { ...data, shareId: e.shareId });
+      }
+      if (seenLocalId.has(localId)) continue;
+      seenLocalId.add(localId);
+      result.push({ id: localId, shareId: e.shareId });
+    } else {
+      if (!loadGame(e.id)) continue;
+      if (seenLocalId.has(e.id)) continue;
+      seenLocalId.add(e.id);
+      result.push(e);
+    }
+  }
+  return result;
+}
+
 /**
  * 로그인 UID 기준 경기 목록을 Firestore와 동기화.
- * - 로그인 시 원격 목록 불러오기 + 실시간 구독(다른 기기 추가/삭제 즉시 반영)
- * - syncGameListToFirebase: 목록 추가/삭제 시 원격과 병합 후 업로드
- * - refreshListFromRemote: 당겨서 새로고침 등에서 Firestore 목록 다시 불러오기
+ * - Firebase userGameLists를 단일 소스로 적용, shareId 기준 중복 제거·로컬 id 해석
+ * - 목록/공유 경기 실시간 구독으로 다른 기기 편집 즉시 반영
  */
 export function useGameListSync(
   authUid: string | null,
@@ -26,88 +64,91 @@ export function useGameListSync(
   syncGameListToFirebase: (opts?: { added?: string; removed?: string }) => void;
   refreshListFromRemote: () => void;
 } {
-  const applyMerged = useCallback(
-    (entries: GameListEntry[]) => {
-      saveGameList(entries.map((e) => e.id));
+  const unsubSharedRef = useRef<(() => void)[]>([]);
+
+  const applyResolvedList = useCallback(
+    (resolved: GameListEntry[]) => {
+      saveGameList(resolved.map((e) => e.id));
       onListChange();
+      unsubSharedRef.current.forEach((u) => u());
+      unsubSharedRef.current = [];
+      resolved.forEach((e) => {
+        if (!e.shareId) return;
+        const unsub = subscribeSharedGame(e.shareId, (data) => {
+          saveGame(e.id, { ...data, shareId: e.shareId ?? undefined });
+          onListChange();
+        });
+        if (unsub) unsubSharedRef.current.push(unsub);
+      });
     },
     [onListChange]
   );
 
+  const handleServerList = useCallback(
+    (entries: GameListEntry[]) => {
+      resolveToLocalEntries(entries).then(applyResolvedList).catch(() => {});
+    },
+    [applyResolvedList]
+  );
+
   useEffect(() => {
     if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
-    const applyList = (entries: GameListEntry[]) => {
-      saveGameList(entries.map((e) => e.id));
-      onListChange();
-      entries.forEach((e) => {
-        if (e.shareId && !loadGame(e.id)?.members?.length) {
-          getSharedGame(e.shareId).then((data) => {
-            if (data) {
-              saveGame(e.id, { ...data, shareId: e.shareId ?? undefined });
-              onListChange();
-            }
-          }).catch(() => {});
-        }
-      });
-    };
+
     getUserGameList(authUid)
       .then((remote) => {
-        const localIds = loadGameList();
-        const remoteMap = new Map(remote.map((e) => [e.id, e]));
-        const merged: GameListEntry[] = [];
-        for (const id of localIds) {
-          merged.push(remoteMap.get(id) ?? { id, shareId: loadGame(id).shareId ?? null });
-          remoteMap.delete(id);
-        }
-        for (const e of remoteMap.values()) merged.push(e);
-        mergeUserGameList(authUid, merged).then((ok) => {
-          if (ok) getUserGameList(authUid).then(applyList).catch(() => applyList(merged));
-          else applyList(remote);
-        }).catch(() => applyList(remote));
+        const deduped = dedupeByShareId(remote);
+        return resolveToLocalEntries(deduped).then((resolved) => {
+          applyResolvedList(resolved);
+          mergeUserGameList(authUid, resolved).then(() => {});
+        });
       })
       .catch(() => {});
+
     getSharedGameIdsByUid(authUid)
       .then((shareIds) => {
-        const existingShareIds = new Set(
-          loadGameList().map((id) => loadGame(id).shareId).filter((s): s is string => !!s)
-        );
-        const toAdd = shareIds.filter((s) => !existingShareIds.has(s));
-        if (toAdd.length === 0) return;
-        Promise.all(
-          toAdd.map((shareId) =>
-            getSharedGame(shareId).then((data) => {
-              if (!data) return null;
+        getUserGameList(authUid).then((remote) => {
+          const existingShareIds = new Set(
+            dedupeByShareId(remote).map((e) => e.shareId).filter((s): s is string => !!s)
+          );
+          const toAdd = shareIds.filter((s) => !existingShareIds.has(s));
+          if (toAdd.length === 0) return;
+          Promise.all(
+            toAdd.map((shareId) =>
+              getSharedGame(shareId).then((data) => (data ? { shareId, data } : null))
+            )
+          ).then((results) => {
+            const newEntries: GameListEntry[] = [];
+            results.forEach((r) => {
+              if (!r) return;
               const newId = createGameId();
-              saveGame(newId, { ...data, shareId });
-              return newId;
-            })
-          )
-        ).then((newIds) => {
-          const added = newIds.filter((n): n is string => n != null);
-          if (added.length === 0) return;
-          const prev = loadGameList();
-          saveGameList([...prev, ...added]);
-          const toMerge: GameListEntry[] = [...prev, ...added].map((id) => ({
-            id,
-            shareId: loadGame(id).shareId ?? null,
-          }));
-          mergeUserGameList(authUid, toMerge).then((ok) => {
-            if (ok) onListChange();
+              saveGame(newId, { ...r.data, shareId: r.shareId });
+              newEntries.push({ id: newId, shareId: r.shareId });
+            });
+            if (newEntries.length === 0) return;
+            mergeUserGameList(authUid, newEntries).then((ok) => {
+              if (ok) getUserGameList(authUid).then(handleServerList).catch(() => {});
+            });
           });
         });
       })
       .catch(() => {});
-    const unsub = subscribeUserGameList(authUid, applyList, () => {});
-    return () => unsub?.();
-  }, [authUid, onListChange, applyMerged]);
+
+    const unsub = subscribeUserGameList(authUid, handleServerList, () => {});
+
+    return () => {
+      unsub?.();
+      unsubSharedRef.current.forEach((u) => u());
+      unsubSharedRef.current = [];
+    };
+  }, [authUid, handleServerList, applyResolvedList]);
 
   const syncGameListToFirebase = useCallback(
     (opts?: { added?: string; removed?: string }) => {
       if (!authUid || !isSyncAvailable()) return;
       if (opts?.removed != null) {
         getUserGameList(authUid).then((remote) => {
-          const merged = remote.filter((e) => e.id !== opts.removed);
-          setUserGameList(authUid, merged).catch(() => {});
+          const filtered = remote.filter((e) => e.id !== opts.removed);
+          setUserGameList(authUid, dedupeByShareId(filtered)).catch(() => {});
         }).catch(() => {});
         return;
       }
@@ -115,9 +156,7 @@ export function useGameListSync(
         const addedId: string = opts.added;
         const toAdd: GameListEntry = { id: addedId, shareId: loadGame(addedId).shareId ?? null };
         mergeUserGameList(authUid, [toAdd]).then((ok) => {
-          if (ok) {
-            getUserGameList(authUid).then(applyMerged).catch(() => {});
-          }
+          if (ok) getUserGameList(authUid).then(handleServerList).catch(() => {});
         }).catch(() => {});
         return;
       }
@@ -127,12 +166,10 @@ export function useGameListSync(
         shareId: loadGame(id).shareId ?? null,
       }));
       mergeUserGameList(authUid, toMerge).then((ok) => {
-        if (ok) {
-          getUserGameList(authUid).then(applyMerged).catch(() => {});
-        }
+        if (ok) getUserGameList(authUid).then(handleServerList).catch(() => {});
       }).catch(() => {});
     },
-    [authUid, applyMerged]
+    [authUid, handleServerList]
   );
 
   const refreshListFromRemote = useCallback(() => {
@@ -140,8 +177,10 @@ export function useGameListSync(
       onListChange();
       return;
     }
-    getUserGameList(authUid).then(applyMerged).catch(() => onListChange());
-  }, [authUid, applyMerged, onListChange]);
+    getUserGameList(authUid).then((entries) => {
+      resolveToLocalEntries(dedupeByShareId(entries)).then(applyResolvedList).catch(() => onListChange());
+    }).catch(() => onListChange());
+  }, [authUid, onListChange, applyResolvedList]);
 
   return { syncGameListToFirebase, refreshListFromRemote };
 }

@@ -1115,8 +1115,22 @@ export function GameView({ gameId }: { gameId: string | null }) {
       importedFromShare: existing.importedFromShare ?? undefined,
       shareId: existing.shareId ?? undefined,
     };
-    /** 로컬 저장 후, 공유 경기(shareId)면 Firestore 업로드(실시간 공유). 원격 적용 직후 1회는 skipNextFirestorePush로 스킵 */
+    /** 공유 경기인데 state는 아직 비어 있고 로컬에는 데이터가 있음 → 진입 직후. 빈 payload로 Firebase 쓰면 서버 초기화 후 다른 기기로 퍼져 데이터 유실되므로 이번 run에서는 저장/업로드 스킵 */
+    const isSharedButStateNotLoaded =
+      existing.shareId &&
+      members.length === 0 &&
+      matches.length === 0 &&
+      ((existing.members?.length ?? 0) > 0 || (existing.matches?.length ?? 0) > 0);
+    if (isSharedButStateNotLoaded) return;
+    /** 로컬 저장 후, 공유 경기(shareId)면 Firestore 업로드. 빈 payload로 로컬/서버 덮어쓰기 방지(데이터 유실 방지). */
     const runSave = (id: string, data: GameData) => {
+      const localBefore = loadGame(id);
+      const wouldOverwriteWithEmpty =
+        data.shareId &&
+        (data.members?.length ?? 0) === 0 &&
+        (data.matches?.length ?? 0) === 0 &&
+        ((localBefore.members?.length ?? 0) > 0 || (localBefore.matches?.length ?? 0) > 0);
+      if (wouldOverwriteWithEmpty) return;
       saveGame(id, data);
       if (data.shareId && isSyncAvailable()) {
         if (skipNextFirestorePush.current) {

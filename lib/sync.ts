@@ -222,7 +222,19 @@ function parseListFromDoc(data: unknown): GameListEntry[] {
     }));
 }
 
-/** UID별 경기 목록을 트랜잭션으로 읽고, 전달한 목록과 id 기준 병합 후 저장. 동시에 두 기기가 써도 항목이 사라지지 않음. */
+/** shareId 기준으로 중복 제거 (동일 shareId는 첫 항목만 유지). */
+function dedupeByShareId(entries: GameListEntry[]): GameListEntry[] {
+  const seen = new Set<string>();
+  return entries.filter((e) => {
+    if (e.shareId) {
+      if (seen.has(e.shareId)) return false;
+      seen.add(e.shareId);
+    }
+    return true;
+  });
+}
+
+/** UID별 경기 목록을 트랜잭션으로 읽고, 전달한 목록과 id 기준 병합 후 저장. 동일 shareId는 1건만 유지. */
 export async function mergeUserGameList(uid: string, entries: GameListEntry[]): Promise<boolean> {
   const ok = await ensureFirebase();
   const db = getDb();
@@ -234,7 +246,8 @@ export async function mergeUserGameList(uid: string, entries: GameListEntry[]): 
       const current = snap.exists() ? parseListFromDoc(snap.data()) : [];
       const byId = new Map<string, GameListEntry>(current.map((e) => [e.id, e]));
       for (const e of entries) byId.set(e.id, e);
-      const merged = Array.from(byId.values());
+      let merged = Array.from(byId.values());
+      merged = dedupeByShareId(merged);
       transaction.set(ref, { list: merged, updatedAt: serverTimestamp() });
     });
     return true;
