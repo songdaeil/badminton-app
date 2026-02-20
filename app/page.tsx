@@ -2104,16 +2104,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
               willChange: carouselDragOffset !== 0 ? "transform" : "auto",
             }}
           >
-            {/* 패널 0: 경기 방식 */}
+            {/* 패널 0: 경기 방식 - 프로필 수정 오버레이와 동일한 스크롤 구조 */}
             <div
-              ref={(el) => { panelScrollRefs.current[0] = el; }}
-              className="shrink-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 touch-pan-y"
+              className="shrink-0 flex flex-col h-full min-h-0"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
-                WebkitOverflowScrolling: "touch",
               }}
             >
+              <div
+                ref={(el) => { panelScrollRefs.current[0] = el; }}
+                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
+                style={{ WebkitOverflowScrolling: "touch" }}
+              >
         <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
@@ -2279,17 +2282,21 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
         </section>
         </div>
+              </div>
             </div>
-            {/* 패널 1: 경기 목록 */}
+            {/* 패널 1: 경기 목록 - 프로필 수정과 동일한 스크롤 구조 */}
             <div
-              ref={(el) => { panelScrollRefs.current[1] = el; }}
-              className="shrink-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative touch-pan-y"
+              className="shrink-0 flex flex-col h-full min-h-0"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
-                WebkitOverflowScrolling: "touch",
               }}
             >
+              <div
+                ref={(el) => { panelScrollRefs.current[1] = el; }}
+                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
+                style={{ WebkitOverflowScrolling: "touch" }}
+              >
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
         /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시(공유 경기 실시간 동기화 반영). 하단 여백으로 카드 위에서도 위아래 스크롤 가능 */
@@ -3192,17 +3199,21 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
         </div>
+              </div>
             </div>
-            {/* 패널 2: 경기 이사 */}
+            {/* 패널 2: 경기 이사 - 프로필 수정과 동일한 스크롤 구조 */}
             <div
-              ref={(el) => { panelScrollRefs.current[2] = el; }}
-              className="shrink-0 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 touch-pan-y"
+              className="shrink-0 flex flex-col h-full min-h-0"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
-                WebkitOverflowScrolling: "touch",
               }}
             >
+              <div
+                ref={(el) => { panelScrollRefs.current[2] = el; }}
+                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
+                style={{ WebkitOverflowScrolling: "touch" }}
+              >
           <div key="myinfo" className="pt-4 space-y-2 animate-fade-in-up">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
             {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
@@ -3415,8 +3426,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
             )}
           </div>
-            </div>
           </div>
+        </div>
+        </div>
         </div>
       </main>
 
