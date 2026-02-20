@@ -557,16 +557,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
     authUid,
     useCallback(() => setListRefreshKey((k) => k + 1), [])
   );
-  /** 터치 스와이프·당겨서 새로고침: 당긴 거리(px), 새로고침 중 여부 */
-  const [pullDistance, setPullDistance] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  /** 캐러셀: 가로 드래그 시 옆 섹션 비치는 오프셋(px) */
   const carouselViewportRef = useRef<HTMLDivElement>(null);
-  const pullHandleRef = useRef<HTMLDivElement>(null);
   const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
-  const touchStartRef = useRef({ x: 0, y: 0 });
-  /** 가로 스와이프 vs 세로 스크롤/당겨서새로고침 결정 후 유지 */
-  const gestureLockRef = useRef<"v" | "pull" | null>(null);
   /** 경기 목록 상세·프로필 수정 등 섹션 하위 오버레이 열림 시 true → 캐러셀 스와이프 무시 */
   const overlayOpenRef = useRef(false);
   /** 오버레이(도움말·확인 모달) 스와이프 제스처용 */
@@ -934,89 +926,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const NAV_ORDER: ("setting" | "record" | "myinfo")[] = ["setting", "record", "myinfo"];
   const navIndex = NAV_ORDER.indexOf(navView);
 
-  /** 현재 섹션만 새로고침 (당겨서 새로고침 시 호출) */
-  const refreshCurrentSection = useCallback(() => {
-    if (navView === "setting") {
-      /* 경기 방식: 로컬 설정만 있음, 재렌더로 충분 */
-    }
-    if (navView === "record") {
-      refreshListFromRemote();
-    }
-    if (navView === "myinfo" && authUid) {
-      getRemoteProfile(authUid).then((remote) => {
-        const withUid = { ...(remote ?? {}), uid: authUid } as MyInfo;
-        if (remote) {
-          if (!withUid.name) withUid.name = ""; if (!withUid.gender) withUid.gender = "M";
-          setMyInfo(withUid);
-          saveMyInfo(withUid);
-        } else {
-          setMyInfo((prev) => {
-            const next = { ...prev, uid: authUid };
-            saveMyInfo(next);
-            return next;
-          });
-        }
-      });
-    }
-  }, [navView, authUid, refreshListFromRemote]);
-
-  const handleCarouselTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    gestureLockRef.current = null;
-  }, []);
-
-  const handleCarouselTouchEnd = useCallback(() => {
-    if (overlayOpenRef.current) {
-      gestureLockRef.current = null;
-      return;
-    }
-    const lock = gestureLockRef.current;
-    if (lock === "pull") {
-      if (pullDistance >= 60 && !isRefreshing) {
-        setIsRefreshing(true);
-        setPullDistance(0);
-        refreshCurrentSection();
-        setTimeout(() => setIsRefreshing(false), 600);
-      } else {
-        setPullDistance(0);
-      }
-    }
-    gestureLockRef.current = null;
-  }, [pullDistance, isRefreshing, refreshCurrentSection]);
-
   /** 경기 목록 상세·프로필 수정 열림 시 캐러셀 스와이프 무시용 ref 동기화 */
   useEffect(() => {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
-
-  /** 터치: 당겨서 새로고침만 상단 핸들에서 처리. 뷰포트/패널에는 touchmove 미등록 → 세로 스크롤은 항상 브라우저 기본 동작. */
-  useEffect(() => {
-    const handle = pullHandleRef.current;
-    if (!handle) return;
-    const PULL_SLOP = 18;
-    const onMove = (e: TouchEvent) => {
-      if (overlayOpenRef.current) return;
-      const dy = e.touches[0].clientY - touchStartRef.current.y;
-      const lock = gestureLockRef.current;
-      const activePanel = panelScrollRefs.current[navIndex];
-      const atTop = (activePanel?.scrollTop ?? 0) <= 0;
-
-      if (lock === null) {
-        if (dy > PULL_SLOP && atTop) {
-          gestureLockRef.current = "pull";
-        } else {
-          gestureLockRef.current = "v";
-          return;
-        }
-      }
-      if (gestureLockRef.current === "pull") {
-        e.preventDefault();
-        setPullDistance((p) => Math.min(Math.max(0, dy), 80));
-      }
-    };
-    handle.addEventListener("touchmove", onMove, { passive: false });
-    return () => handle.removeEventListener("touchmove", onMove);
-  }, [navIndex]);
 
   /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
   const uploadProfileToFirestore = useCallback(async () => {
@@ -2071,21 +1984,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           className="flex-1 min-h-0 flex flex-col overflow-hidden"
           style={{ touchAction: "pan-y" }}
         >
-          {/* 당겨서 새로고침: 상단 핸들에서만 터치 처리 → 패널 영역은 세로 스크롤 방해 없음 */}
-          <div
-            ref={pullHandleRef}
-            className="shrink-0 min-h-[48px] flex justify-center items-center"
-            style={{ minHeight: pullDistance > 0 ? Math.min(pullDistance, 56) : 48 }}
-            onTouchStart={handleCarouselTouchStart}
-            onTouchEnd={handleCarouselTouchEnd}
-          >
-            {(pullDistance > 0 || isRefreshing) && (
-              <span className={`text-slate-500 text-sm ${isRefreshing ? "animate-pulse" : ""}`}>
-                {isRefreshing ? "새로고침 중..." : "↓ 당기면 새로고침"}
-              </span>
-            )}
-          </div>
-          {/* transform 없이 현재 탭 패널만 렌더 → iOS 등에서 상하 스크롤 정상 동작 */}
+          {/* 현재 탭 패널만 렌더 → iOS 등에서 상하 스크롤 정상 동작 */}
           <div className="flex-1 min-h-0 overflow-hidden w-full">
             {navIndex === 0 && (
             <div className="w-full h-full flex flex-col min-h-0">
@@ -2265,11 +2164,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {navIndex === 1 && (
             <div className="w-full h-full flex flex-col min-h-0 overflow-hidden">
               <div
+                id="record-list-scroll"
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
-                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
-                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+                className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain pl-2 pr-2 relative"
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
-        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
+        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh] w-full">
         {!selectedGameId && (
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
