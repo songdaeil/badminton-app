@@ -1008,10 +1008,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
 
-  /** 캐러셀 터치: 가로 드래그 시 옆 섹션 비치게, 세로는 패널 스크롤/당겨서새로고침 (passive: false) */
+  /** 캐러셀 터치: 가로 드래그 시 옆 섹션 비치게, 세로는 패널 스크롤/당겨서새로고침. 세로 스크롤 우선(가로는 명확할 때만). */
   useEffect(() => {
     const viewport = carouselViewportRef.current;
     if (!viewport) return;
+    const SLOP = 12;
+    const H_THRESH = 1.4;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
       const x = e.touches[0].clientX;
@@ -1022,10 +1024,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
       if (lock === null) {
         const activePanel = panelScrollRefs.current[navIndex];
         const atTop = (activePanel?.scrollTop ?? 0) <= 0;
-        if (Math.abs(dx) > Math.abs(dy)) {
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        if (adx > SLOP && adx > ady * H_THRESH) {
           gestureLockRef.current = "h";
           lock = "h";
-        } else if (dy > 0 && atTop) {
+        } else if (dy > SLOP && atTop) {
           gestureLockRef.current = "pull";
           lock = "pull";
         } else {
@@ -2098,7 +2102,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden">
         <div
           ref={carouselViewportRef}
-          className="flex-1 min-h-0 overflow-hidden touch-pan-y"
+          className="flex-1 min-h-0 overflow-hidden"
           onTouchStart={handleCarouselTouchStart}
           onTouchEnd={handleCarouselTouchEnd}
         >
