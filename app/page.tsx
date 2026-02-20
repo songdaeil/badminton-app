@@ -1008,33 +1008,48 @@ export function GameView({ gameId }: { gameId: string | null }) {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
 
-  /** 캐러셀 터치: 가로 드래그 시 옆 섹션 비치게, 세로는 패널 스크롤/당겨서새로고침. 세로 스크롤 우선(가로는 명확할 때만). */
+  /** 캐러셀 터치: 가로 드래그 시 옆 섹션 비치게, 세로는 패널 스크롤. 패널 안 터치 시 세로 스크롤 최우선. */
   useEffect(() => {
     const viewport = carouselViewportRef.current;
     if (!viewport) return;
-    const SLOP = 12;
-    const H_THRESH = 1.4;
+    const SLOP = 10;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
       const x = e.touches[0].clientX;
       const y = e.touches[0].clientY;
       const dx = x - touchStartRef.current.x;
       const dy = y - touchStartRef.current.y;
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
       let lock = gestureLockRef.current;
+      const activePanel = panelScrollRefs.current[navIndex];
+      const touchInsidePanel = activePanel && e.target instanceof Node && activePanel.contains(e.target);
+
       if (lock === null) {
-        const activePanel = panelScrollRefs.current[navIndex];
         const atTop = (activePanel?.scrollTop ?? 0) <= 0;
-        const adx = Math.abs(dx);
-        const ady = Math.abs(dy);
-        if (adx > SLOP && adx > ady * H_THRESH) {
-          gestureLockRef.current = "h";
-          lock = "h";
-        } else if (dy > SLOP && atTop) {
-          gestureLockRef.current = "pull";
-          lock = "pull";
+        if (touchInsidePanel) {
+          if (ady >= adx || adx < 20) {
+            gestureLockRef.current = "v";
+            return;
+          }
+          if (adx > SLOP && adx > ady * 2) {
+            gestureLockRef.current = "h";
+            lock = "h";
+          } else {
+            gestureLockRef.current = "v";
+            return;
+          }
         } else {
-          gestureLockRef.current = "v";
-          return;
+          if (adx > SLOP && adx > ady * 1.5) {
+            gestureLockRef.current = "h";
+            lock = "h";
+          } else if (dy > SLOP && atTop) {
+            gestureLockRef.current = "pull";
+            lock = "pull";
+          } else {
+            gestureLockRef.current = "v";
+            return;
+          }
         }
       }
       if (lock === "h") {
@@ -2313,9 +2328,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 WebkitOverflowScrolling: "touch",
               }}
             >
-        <div key="record-wrap" className="relative pt-4 min-h-[70vh]">
+        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
-        /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시(공유 경기 실시간 동기화 반영). key는 고정해 갱신 시 카드가 통째로 팅겨 오르는 애니 재생 방지 */
+        /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시(공유 경기 실시간 동기화 반영). 하단 여백으로 카드 위에서도 위아래 스크롤 가능 */
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
             void listRefreshKey;
@@ -2395,6 +2410,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <button
                       type="button"
                       onClick={() => { setListMenuOpenId(null); setSelectedGameId(id); }}
+                      style={{ touchAction: "pan-y" }}
                       className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors btn-tap"
                     >
                       {/* 1행: 경기 이름 (공간 확보, 비어 있으면 빈 줄 유지) */}
