@@ -1,0 +1,11 @@
+# 한글 등 멀티바이트 문자 깨짐 방지: 프로젝트 기본 UTF-8
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{ts,tsx,js,jsx,json,css,html,md}]
+charset = utf-8

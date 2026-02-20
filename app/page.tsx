@@ -6,7 +6,7 @@ import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loa
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
 import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
 import { getCurrentUserUid, getRemoteProfile, setRemoteProfile } from "@/lib/profile-sync";
-import { addSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
+import { addSharedGame, deleteSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
 import {
   getCurrentEmailUser,
   isEmailAuthAvailable,
@@ -537,9 +537,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const saveResultCooldownUntilRef = useRef(0);
   /** 공유 경기 진입 후 로드 직후 이 시간(ms) 동안은 구독 첫 스냅샷으로 state 덮어쓰지 않음 → 경기 생성 등이 동작하도록 */
   const sharedGameLoadDoneAtRef = useRef(0);
+  /** 경기 생성 직후 이 시간(ms) 동안은 구독의 빈/구버전 원격 데이터로 matches 덮어쓰지 않음 */
+  const matchGenerateDoneAtRef = useRef(0);
   /** 경기 결과 저장 연타 시 Firestore 업로드 한 번만(디바운스) → 완료 순서 뒤바뀜으로 이전 값 덮어쓰기 방지 */
   const saveResultFirestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const SAVE_RESULT_FIRESTORE_DEBOUNCE_MS = 500;
+  /** 로드/구독에서 '현재 명단·경기'와 비교할 때 사용 (state와 동기화) */
+  const membersRef = useRef<Member[]>([]);
+  const matchesRef = useRef<Match[]>([]);
+  membersRef.current = members;
+  matchesRef.current = matches;
   useEffect(() => {
     scoreInputsRef.current = scoreInputs;
   }, [scoreInputs]);
@@ -606,13 +613,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
         }
       }
       if (cancelled) return;
-      const membersWithCorrectStats = recomputeMemberStatsFromMatches(data.members, data.matches);
-      setMembers(membersWithCorrectStats);
+      const loadedMembers = data.members ?? [];
+      const loadedMatches = data.matches ?? [];
+      const hadEmptyLoad = loadedMembers.length === 0 && loadedMatches.length === 0;
+      const userAlreadyAddedMembers = hadEmptyLoad && membersRef.current.length > 0;
+      if (!userAlreadyAddedMembers) {
+        const membersWithCorrectStats = recomputeMemberStatsFromMatches(loadedMembers, loadedMatches);
+        setMembers(membersWithCorrectStats);
+        setMatches(loadedMatches);
+        setMyProfileMemberId(
+          data.myProfileMemberId ?? loadedMembers.find((m) => m.name === myInfo.name?.trim())?.id ?? null
+        );
+        const inputs: Record<string, { s1: string; s2: string }> = {};
+        for (const m of loadedMatches) {
+          inputs[m.id] = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
+        }
+        setScoreInputs(inputs);
+        const matchIdSet = new Set(loadedMatches.map((m) => String(m.id)));
+        const validPlayingIds = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
+        setSelectedPlayingMatchIds(validPlayingIds);
+        setRosterChangedSinceGenerate(loadedMatches.length === 0);
+      }
+      setHighlightMemberId(null);
       setGameName(typeof data.gameName === "string" && data.gameName.trim() ? data.gameName.trim() : "");
-      setMatches(data.matches);
-      setMyProfileMemberId(
-        data.myProfileMemberId ?? data.members.find((m) => m.name === myInfo.name?.trim())?.id ?? null
-      );
       const loadedModeId = data.gameMode && GAME_MODES.some((m) => m.id === data.gameMode) ? data.gameMode! : GAME_MODES[0].id;
       setGameModeId(loadedModeId);
       const loadedMode = GAME_MODES.find((m) => m.id === loadedModeId) ?? GAME_MODES[0];
@@ -622,16 +645,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
       const validScore = typeof rawScore === "number" && rawScore >= 1 && rawScore <= 99 ? rawScore : (loadedMode.defaultScoreLimit ?? 21);
       const validTime = TIME_OPTIONS_30MIN.includes(baseSettings.time) ? baseSettings.time : TIME_OPTIONS_30MIN[0];
       setGameSettings({ ...baseSettings, scoreLimit: validScore, time: validTime });
-      const inputs: Record<string, { s1: string; s2: string }> = {};
-      for (const m of data.matches) {
-        inputs[m.id] = { s1: m.score1 != null ? String(m.score1) : "", s2: m.score2 != null ? String(m.score2) : "" };
-      }
-      setScoreInputs(inputs);
-      const matchIdSet = new Set(data.matches.map((m) => String(m.id)));
-      const validPlayingIds = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
-      setSelectedPlayingMatchIds(validPlayingIds);
-      setHighlightMemberId(null);
-      setRosterChangedSinceGenerate(data.matches.length === 0);
       setMounted(true);
       if (data.shareId) sharedGameLoadDoneAtRef.current = Date.now();
     })();
@@ -676,6 +689,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
       unsub = subscribeSharedGame(shareId, (remote) => {
       const avoidOverwriteMs = 2500;
       if (sharedGameLoadDoneAtRef.current > 0 && Date.now() - sharedGameLoadDoneAtRef.current < avoidOverwriteMs) return;
+      const remoteMatchCount = remote.matches?.length ?? 0;
+      const justGeneratedLocally =
+        matchGenerateDoneAtRef.current > 0 &&
+        Date.now() - matchGenerateDoneAtRef.current < 3000 &&
+        remoteMatchCount < matchesRef.current.length;
+      if (justGeneratedLocally) return;
       skipNextFirestorePush.current = true;
       saveGame(effectiveGameId, remote);
       const inSaveResultCooldown = Date.now() < saveResultCooldownUntilRef.current;
@@ -1012,7 +1031,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         let next = dx;
         if (navIndex <= 0) next = Math.min(0, dx);
         if (navIndex >= 2) next = Math.max(0, dx);
-        next = Math.max(-w * 0.4, Math.min(w * 0.4, next));
+        next = Math.max(-w, Math.min(w, next));
         setCarouselDragOffset(next);
       }
       if (lock === "pull") {
@@ -1182,8 +1201,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
     router.push(`/game/${id}`);
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, router]);
 
-  /** 목록 카드에서 해당 경기 삭제. 삭제 후 경기 목록 섹션에 머물고 상세로 이동하지 않음 */
+  /** 목록 카드에서 해당 경기 삭제. Firestore에 공유된 경기면 원격 문서도 삭제. 삭제 후 경기 목록 섹션에 머물고 상세로 이동하지 않음 */
   const handleDeleteCard = useCallback((gameId: string) => {
+    const data = loadGame(gameId);
+    if (data.shareId && isSyncAvailable()) {
+      deleteSharedGame(data.shareId).catch(() => {});
+    }
     removeGameFromList(gameId);
     setSelectedGameId(null);
     setListMenuOpenId(null);
@@ -1283,8 +1306,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
     }
   }, []);
 
-  /** 경기 방식에서 선정한 로직으로만 경기 생성. 인원 수 검사 후 generateMatchesByGameMode 단일 진입점 사용. */
+  /** 경기 방식에서 선정한 로직으로만 경기 생성. 생성 직후 즉시 저장·공유 반영하여 첫 진입 시에도 경기 현황 유지. */
   const doMatch = useCallback(() => {
+    if (effectiveGameId === null) return;
     const mode = GAME_MODES.find((m) => m.id === gameModeId);
     if (!mode || members.length < mode.minPlayers || members.length > mode.maxPlayers) return;
     const shuffled = [...members].sort(() => Math.random() - 0.5);
@@ -1294,6 +1318,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
     for (const m of newMatches) {
       inputs[m.id] = { s1: "", s2: "" };
     }
+    const membersReset = members.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }));
+    const membersToSave =
+      myProfileMemberId != null
+        ? membersReset.map((m) =>
+            m.id === myProfileMemberId
+              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
+              : m
+          )
+        : membersReset;
     setMatches(newMatches);
     setScoreInputs(inputs);
     setSelectedPlayingMatchIds([]);
@@ -1301,7 +1334,31 @@ export function GameView({ gameId }: { gameId: string | null }) {
       prev.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }))
     );
     setRosterChangedSinceGenerate(false);
-  }, [members, gameModeId]);
+    matchGenerateDoneAtRef.current = Date.now();
+
+    const existing = loadGame(effectiveGameId);
+    const payload: GameData = {
+      members: membersToSave,
+      matches: newMatches,
+      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
+      gameMode: gameModeId,
+      gameSettings,
+      myProfileMemberId: myProfileMemberId ?? undefined,
+      createdAt: existing.createdAt ?? undefined,
+      createdBy: existing.createdBy ?? undefined,
+      createdByName: existing.createdByName ?? undefined,
+      createdByUid: existing.createdByUid ?? undefined,
+      playingMatchIds: [],
+      importedFromShare: existing.importedFromShare ?? undefined,
+      shareId: existing.shareId ?? undefined,
+    };
+    saveGame(effectiveGameId, payload);
+    if (payload.shareId && isSyncAvailable()) {
+      setSharedGame(payload.shareId, payload)
+        .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
+        .catch(() => {});
+    }
+  }, [effectiveGameId, gameModeId, gameName, gameSettings, members, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade]);
 
   const scoreLimit = Math.max(1, gameSettings.scoreLimit || 21);
 
@@ -2037,7 +2094,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
               transform: carouselViewportWidth > 0
                 ? `translateX(${-navIndex * carouselViewportWidth + carouselDragOffset}px)`
                 : `translateX(calc(-${navIndex} * 33.333% + ${carouselDragOffset}px))`,
-              transition: carouselDragOffset === 0 ? "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)" : "none",
+              transition: carouselDragOffset === 0 ? "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)" : "none",
+              willChange: carouselDragOffset !== 0 ? "transform" : "auto",
             }}
           >
             {/* 패널 0: 경기 방식 */}

@@ -3,6 +3,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
@@ -98,6 +99,21 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
     return true;
   } catch (e) {
     console.error("[Firebase] setSharedGame 실패:", e);
+    return false;
+  }
+}
+
+/** Firestore에서 공유 경기 문서 삭제 (앱에서 경기 카드 삭제 시 호출) */
+export async function deleteSharedGame(shareId: string): Promise<boolean> {
+  const ok = await ensureFirebase();
+  const db = getDb();
+  if (!ok || !db) return false;
+  try {
+    const ref = doc(db, COLLECTION, shareId);
+    await deleteDoc(ref);
+    return true;
+  } catch (e) {
+    console.error("[Firebase] deleteSharedGame 실패:", e);
     return false;
   }
 }
