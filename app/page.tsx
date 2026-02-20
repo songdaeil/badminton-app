@@ -2382,11 +2382,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         </span>
                       </span>
                     )}
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => { setListMenuOpenId(null); setSelectedGameId(id); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setListMenuOpenId(null); setSelectedGameId(id); } }}
                       style={{ touchAction: "pan-y" }}
-                      className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors btn-tap"
+                      className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors btn-tap cursor-pointer"
                     >
                       {/* 1행: 경기 이름 (공간 확보, 비어 있으면 빈 줄 유지) */}
                       <p className="font-semibold text-slate-800 truncate text-sm leading-tight font-numeric min-h-[1.25rem]" title={titleLabel}>{titleLabel || "\u00A0"}</p>
@@ -2473,7 +2475,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                           )}
                         </div>
                       </div>
-                    </button>
+                    </div>
                     {/* 카드별 ... 메뉴 (삭제·복사) */}
                     <div className="absolute top-1 right-1">
                       <button
