@@ -14,6 +14,13 @@ import type { GameData } from "@/lib/game-storage";
 import { ensureFirebase, getDb } from "@/lib/firebase";
 
 const COLLECTION = "sharedGames";
+const USER_GAME_LIST_COLLECTION = "userGameLists";
+
+/** UID별 경기 목록 항목 (id = 로컬 경기 id, shareId = Firestore 공유 문서 id) */
+export interface GameListEntry {
+  id: string;
+  shareId: string | null;
+}
 
 /** Firestore는 undefined 미지원. JSON 직렬화로 깊은 복사 후 undefined → null 치환해 데이터 누락 방지 */
 function toStoredData(data: GameData): Record<string, unknown> {
@@ -115,6 +122,82 @@ export async function deleteSharedGame(shareId: string): Promise<boolean> {
   } catch (e) {
     console.error("[Firebase] deleteSharedGame 실패:", e);
     return false;
+  }
+}
+
+/** UID별 경기 목록 조회 */
+export async function getUserGameList(uid: string): Promise<GameListEntry[]> {
+  const ok = await ensureFirebase();
+  const db = getDb();
+  if (!ok || !db) return [];
+  try {
+    const ref = doc(db, USER_GAME_LIST_COLLECTION, uid);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return [];
+    const data = snap.data();
+    const list = data?.list;
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((e: unknown) => e && typeof e === "object" && typeof (e as { id?: unknown }).id === "string")
+      .map((e: { id: string; shareId?: string | null }) => ({
+        id: e.id,
+        shareId: typeof e.shareId === "string" ? e.shareId : null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** UID별 경기 목록 저장 */
+export async function setUserGameList(uid: string, entries: GameListEntry[]): Promise<boolean> {
+  const ok = await ensureFirebase();
+  const db = getDb();
+  if (!ok || !db) return false;
+  try {
+    const ref = doc(db, USER_GAME_LIST_COLLECTION, uid);
+    await setDoc(ref, { list: entries, updatedAt: serverTimestamp() });
+    return true;
+  } catch (e) {
+    console.error("[Firebase] setUserGameList 실패:", e);
+    return false;
+  }
+}
+
+/** UID별 경기 목록 실시간 구독 */
+export function subscribeUserGameList(
+  uid: string,
+  onData: (entries: GameListEntry[]) => void,
+  onError?: (err: Error) => void
+): (() => void) | null {
+  const db = getDb();
+  if (!db) return null;
+  try {
+    const ref = doc(db, USER_GAME_LIST_COLLECTION, uid);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) {
+          onData([]);
+          return;
+        }
+        const list = snap.data()?.list;
+        if (!Array.isArray(list)) {
+          onData([]);
+          return;
+        }
+        const entries: GameListEntry[] = list
+          .filter((e: unknown) => e && typeof e === "object" && typeof (e as { id?: unknown }).id === "string")
+          .map((e: { id: string; shareId?: string | null }) => ({
+            id: e.id,
+            shareId: typeof e.shareId === "string" ? e.shareId : null,
+          }));
+        onData(entries);
+      },
+      (err) => onError?.(err)
+    );
+    return () => unsub();
+  } catch {
+    return null;
   }
 }
 
