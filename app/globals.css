@@ -70,6 +70,22 @@ head div {
   border: 1px solid var(--border-light);
 }
 
+/* 카드 터치/호버 시 앱처럼 살짝 반응 */
+.card-app-interactive {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-app-interactive:hover {
+  box-shadow: var(--card-shadow-hover);
+}
+.card-app-interactive:active {
+  transform: scale(0.99);
+}
+
+/* 본문 스크롤 부드럽게 (앱 느낌) */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
 /* 버튼 프라이머리 */
 .btn-primary {
   background: var(--primary);
@@ -188,6 +204,18 @@ head div {
   to { opacity: 1; transform: translateX(0); }
 }
 
+/* 앱 탭 전환: 새 화면이 부드럽게 올라오며 등장 */
+@keyframes panelEnter {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 콘텐츠가 살짝 늘어나며 등장 (스프링 느낌) */
+@keyframes contentPop {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.25s ease-out forwards;
 }
@@ -217,6 +245,17 @@ head div {
   animation: slideInFromLeft 0.3s ease-out forwards;
 }
 
+/* 탭 전환 시 패널 등장 (앱 스크린 전환 느낌) */
+.animate-panel-enter {
+  opacity: 0;
+  animation: panelEnter 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-content-pop {
+  opacity: 0;
+  animation: contentPop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 /* 애니메이션 중·종료 후에도 터치 가능 (forwards로 종료 상태 유지, pointer-events 차단 없음) */
 [class*="animate-"] {
   pointer-events: auto;
@@ -231,6 +270,10 @@ head div {
 .animate-stagger-6 { animation-delay: 0.18s; }
 .animate-stagger-7 { animation-delay: 0.21s; }
 .animate-stagger-8 { animation-delay: 0.24s; }
+.animate-stagger-9 { animation-delay: 0.27s; }
+.animate-stagger-10 { animation-delay: 0.30s; }
+.animate-stagger-11 { animation-delay: 0.33s; }
+.animate-stagger-12 { animation-delay: 0.36s; }
 
 .btn-tap {
   transition: transform 0.15s ease, opacity 0.15s ease;
@@ -239,7 +282,10 @@ head div {
   transform: scale(0.97);
 }
 
-/* 네비 탭 전환 시 부드러운 색상 변화 */
+/* 네비 탭 전환 시 부드러운 색상 변화 + 아이콘 살짝 반응 */
 .nav-tab {
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+.nav-tab:active {
+  transform: scale(0.96);
 }

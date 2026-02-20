@@ -1978,7 +1978,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </>
       )}
 
-      <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden">
+      <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden scroll-smooth">
         <div
           ref={carouselViewportRef}
           className="flex-1 min-h-0 flex flex-col overflow-hidden"
@@ -1993,10 +1993,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
                 style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
-        <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
+        <div key="setting" className="space-y-2 pt-4 animate-panel-enter">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
-          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden min-w-0">
+          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden min-w-0 card-app card-app-interactive">
             {/* 상단 카테고리 탭 - 좁은 폭에서 크기 자동 보정, 균등 분배 */}
             <div className="flex border-b border-[#e8e8ed] flex-nowrap min-w-0">
               {GAME_CATEGORIES.map((cat) => {
@@ -2169,7 +2169,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain pl-2 pr-2 relative"
                 style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
-        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh] w-full">
+        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh] w-full animate-panel-enter">
         {!selectedGameId && (
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
@@ -2236,7 +2236,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const waitingCount = total - completedCount - ongoingCount;
                 const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
                 const isMenuOpen = listMenuOpenId === id;
-                const staggerClass = ["animate-stagger-1", "animate-stagger-2", "animate-stagger-3", "animate-stagger-4", "animate-stagger-5", "animate-stagger-6", "animate-stagger-7", "animate-stagger-8"][index % 8];
+                const staggerClass = ["animate-stagger-1", "animate-stagger-2", "animate-stagger-3", "animate-stagger-4", "animate-stagger-5", "animate-stagger-6", "animate-stagger-7", "animate-stagger-8", "animate-stagger-9", "animate-stagger-10", "animate-stagger-11", "animate-stagger-12"][index % 12];
                 return (
                   <li key={id} className={`relative animate-fade-in-up ${staggerClass}`}>
                     {isNewest && (
@@ -2253,7 +2253,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       onClick={() => { setListMenuOpenId(null); setSelectedGameId(id); }}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setListMenuOpenId(null); setSelectedGameId(id); } }}
                       style={{ touchAction: "pan-y" }}
-                      className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors btn-tap cursor-pointer"
+                      className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] transition-all duration-200 btn-tap cursor-pointer card-app-interactive"
                     >
                       {/* 1행: 경기 이름 (공간 확보, 비어 있으면 빈 줄 유지) */}
                       <p className="font-semibold text-slate-800 truncate text-sm leading-tight font-numeric min-h-[1.25rem]" title={titleLabel}>{titleLabel || "\u00A0"}</p>
@@ -2482,7 +2482,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             )}
           </div>
           {/* 경기 요약 카드 */}
-          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2">
+          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 card-app card-app-interactive">
             <div className="px-4 py-0.5 border-b border-[#e8e8ed]">
               <h3 className="text-base font-semibold text-slate-800 leading-tight">경기 요약</h3>
             </div>
@@ -2588,7 +2588,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
 
           {/* 경기 명단 카드 - 报名名单 스타일 */}
-          <div id="section-members" className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 scroll-mt-2">
+          <div id="section-members" className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 scroll-mt-2 card-app card-app-interactive">
             <div className="px-2 py-1.5 border-b border-[#e8e8ed] flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
@@ -2757,7 +2757,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           {/* 매치 목록 - 1줄씩 */}
           <section id="section-matches" className="scroll-mt-2">
           {matches.length > 0 && (
-            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2">
+            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 card-app card-app-interactive">
               <div className="px-2 py-1.5 border-b border-[#e8e8ed]">
                 <h3 className="text-base font-semibold text-slate-800">경기 현황</h3>
                 {(() => {
@@ -2981,7 +2981,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
         {/* 경기 결과(랭킹) 카드 */}
         <section id="section-ranking" className="scroll-mt-2">
-          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+          <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
             <div className="px-2 py-1.5 border-b border-[#e8e8ed]">
               <h3 className="text-base font-semibold text-slate-800">경기 결과</h3>
               <p className="text-xs text-slate-500 mt-0.5">경기 현황에서 진행한 경기 점수로 산출됩니다. 승수·득실차·급수 순으로 정렬됩니다.</p>
@@ -3085,10 +3085,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
                 style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
-          <div key="myinfo" className="pt-4 space-y-2 animate-fade-in-up">
+          <div key="myinfo" className="pt-4 space-y-2 animate-panel-enter">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
             {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
-              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
                 <div className="px-3 py-3 space-y-3">
                   <p className="text-xs text-slate-500">
                     로그인 수단:{" "}
@@ -3126,7 +3126,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
             {/* 프로필 = 이름 + 성별기호 + 급수기호. 나의 프로필 (로그인 시): 요약 + 프로필 수정 → 클릭 시 상세 폼 */}
             {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
-              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
                 <div className="px-2.5 py-2 border-b border-[#e8e8ed]">
                   <h3 className="text-sm font-semibold text-slate-800">나의 프로필</h3>
                 </div>
@@ -3156,7 +3156,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
             )}
 
-            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden">
+            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
               <div className="px-2 py-2 space-y-4">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-700 mb-1.5">나의 전적</h3>
