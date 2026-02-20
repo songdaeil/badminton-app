@@ -568,7 +568,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
   const touchStartRef = useRef({ x: 0, y: 0 });
   /** 가로 스와이프 vs 세로 스크롤/당겨서새로고침 결정 후 유지 */
-  const gestureLockRef = useRef<"h" | "v" | "pull" | null>(null);
+  const gestureLockRef = useRef<"v" | "pull" | null>(null);
   /** 경기 목록 상세·프로필 수정 등 섹션 하위 오버레이 열림 시 true → 캐러셀 스와이프 무시 */
   const overlayOpenRef = useRef(false);
   /** 오버레이(도움말·확인 모달) 스와이프 제스처용 */
@@ -967,7 +967,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     gestureLockRef.current = null;
   }, []);
 
-  const handleCarouselTouchEnd = useCallback((e: React.TouchEvent) => {
+  const handleCarouselTouchEnd = useCallback(() => {
     if (overlayOpenRef.current) {
       gestureLockRef.current = null;
       return;
@@ -983,14 +983,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setPullDistance(0);
       }
     }
-    if (lock === "h") {
-      const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
-      if (dx > 80 && navIndex > 0) setNavView(NAV_ORDER[navIndex - 1]);
-      else if (dx < -80 && navIndex < 2) setNavView(NAV_ORDER[navIndex + 1]);
-      setCarouselDragOffset(0);
-    }
     gestureLockRef.current = null;
-  }, [pullDistance, isRefreshing, refreshCurrentSection, navIndex]);
+  }, [pullDistance, isRefreshing, refreshCurrentSection]);
 
   /** 캐러셀 뷰포트 너비 측정 (패널 정확 정렬용) */
   useEffect(() => {
@@ -1008,62 +1002,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
 
-  /** 캐러셀 터치: 가로 드래그 시 옆 섹션 비치게, 세로는 패널 스크롤. 패널 안 터치 시 세로 스크롤 최우선. */
+  /** 터치: 상하 스크롤은 항상 브라우저에 맡김. 당겨서 새로고침만 맨 위에서 아래로 당길 때만 처리. */
   useEffect(() => {
     const viewport = carouselViewportRef.current;
     if (!viewport) return;
-    const SLOP = 10;
+    const PULL_SLOP = 14;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
-      const x = e.touches[0].clientX;
-      const y = e.touches[0].clientY;
-      const dx = x - touchStartRef.current.x;
-      const dy = y - touchStartRef.current.y;
-      const adx = Math.abs(dx);
-      const ady = Math.abs(dy);
-      let lock = gestureLockRef.current;
+      const dy = e.touches[0].clientY - touchStartRef.current.y;
+      const lock = gestureLockRef.current;
       const activePanel = panelScrollRefs.current[navIndex];
-      const touchInsidePanel = activePanel && e.target instanceof Node && activePanel.contains(e.target);
+      const atTop = (activePanel?.scrollTop ?? 0) <= 0;
 
       if (lock === null) {
-        const atTop = (activePanel?.scrollTop ?? 0) <= 0;
-        if (touchInsidePanel) {
-          if (ady >= adx || adx < 20) {
-            gestureLockRef.current = "v";
-            return;
-          }
-          if (adx > SLOP && adx > ady * 2) {
-            gestureLockRef.current = "h";
-            lock = "h";
-          } else {
-            gestureLockRef.current = "v";
-            return;
-          }
+        if (dy > PULL_SLOP && atTop) {
+          gestureLockRef.current = "pull";
         } else {
-          if (adx > SLOP && adx > ady * 1.5) {
-            gestureLockRef.current = "h";
-            lock = "h";
-          } else if (dy > SLOP && atTop) {
-            gestureLockRef.current = "pull";
-            lock = "pull";
-          } else {
-            gestureLockRef.current = "v";
-            return;
-          }
+          gestureLockRef.current = "v";
+          return;
         }
       }
-      if (lock === "h") {
+      if (gestureLockRef.current === "pull") {
         e.preventDefault();
-        const w = viewport.offsetWidth;
-        let next = dx;
-        if (navIndex <= 0) next = Math.min(0, dx);
-        if (navIndex >= 2) next = Math.max(0, dx);
-        next = Math.max(-w, Math.min(w, next));
-        setCarouselDragOffset(next);
-      }
-      if (lock === "pull") {
-        e.preventDefault();
-        setPullDistance((p) => Math.min(dy, 80));
+        setPullDistance((p) => Math.min(Math.max(0, dy), 80));
       }
     };
     viewport.addEventListener("touchmove", onMove, { passive: false });
@@ -2118,6 +2079,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <div
           ref={carouselViewportRef}
           className="flex-1 min-h-0 overflow-hidden"
+          style={{ touchAction: "pan-y" }}
           onTouchStart={handleCarouselTouchStart}
           onTouchEnd={handleCarouselTouchEnd}
         >
