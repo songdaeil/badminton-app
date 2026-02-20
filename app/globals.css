@@ -20,6 +20,8 @@
 /* 어르신 가독성: 기준 글자 크기를 키움 (기존 12–16px → 16–22px) */
 html {
   font-size: clamp(16px, 4.5vw, 22px);
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* 유동 글자 크기도 한 단계씩 키움 */
@@ -50,8 +52,10 @@ body {
   text-rendering: optimizeLegibility;
   /* 앱처럼: 노치·홈 인디케이터 영역 피하기 */
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  /* 스크롤 끝에서 바운스 줄이기 (앱 느낌) */
-  overscroll-behavior: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  /* 내부 스크롤 영역은 방해하지 않음 (overflow 미설정) */
+  overscroll-behavior-y: auto;
   /* 터치 시 파란 하이라이트 제거 */
   -webkit-tap-highlight-color: transparent;
 }

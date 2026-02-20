@@ -565,6 +565,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 캐러셀 뷰포트 너비(px) - 패널·트랜스폼 정확 정렬용 */
   const [carouselViewportWidth, setCarouselViewportWidth] = useState(0);
   const carouselViewportRef = useRef<HTMLDivElement>(null);
+  const pullHandleRef = useRef<HTMLDivElement>(null);
   const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
   const touchStartRef = useRef({ x: 0, y: 0 });
   /** 가로 스와이프 vs 세로 스크롤/당겨서새로고침 결정 후 유지 */
@@ -1002,22 +1003,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
 
-  /** 터치: 경기 목록 탭에서는 리스너 미등록으로 상하 스크롤 100% 네이티브. 그 외 탭에서는 패널 안 터치 시 스크롤 방해 안 함. */
+  /** 터치: 당겨서 새로고침만 상단 핸들에서 처리. 뷰포트/패널에는 touchmove 미등록 → 세로 스크롤은 항상 브라우저 기본 동작. */
   useEffect(() => {
-    if (navIndex === 1) return;
-    const viewport = carouselViewportRef.current;
-    if (!viewport) return;
+    const handle = pullHandleRef.current;
+    if (!handle) return;
     const PULL_SLOP = 18;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
-      const target = e.target instanceof Node ? e.target : null;
-      if (target) {
-        for (let i = 0; i < 3; i++) {
-          const panel = panelScrollRefs.current[i];
-          if (panel && panel.contains(target)) return;
-        }
-      }
-
       const activePanel = panelScrollRefs.current[navIndex];
       const dy = e.touches[0].clientY - touchStartRef.current.y;
       const lock = gestureLockRef.current;
@@ -1036,8 +1028,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setPullDistance((p) => Math.min(Math.max(0, dy), 80));
       }
     };
-    viewport.addEventListener("touchmove", onMove, { passive: false });
-    return () => viewport.removeEventListener("touchmove", onMove);
+    handle.addEventListener("touchmove", onMove, { passive: false });
+    return () => handle.removeEventListener("touchmove", onMove);
   }, [navIndex]);
 
   /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
@@ -2073,6 +2065,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <p className="text-sm text-slate-700 leading-relaxed">
               선택한 경기 방식이 경기 목록에 추가됩니다. 원하는 경기를 누르면 상세가 열려 편집할 수 있습니다. 공유 링크를 참가자에게 전달하면, 받은 사람은 경기 명단에 신청(참가자 추가)하고 경기 현황에서 경기 결과를 함께 입력할 수 있습니다.
             </p>
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              Firebase보다 많이 보이면 이 기기에만 있는 경기(로컬 전용)입니다. 경기 목록에서 위로 당겨 새로고침하면 서버 목록으로 맞춰지고, 서버에 없는 항목은 목록에서만 사라집니다.
+            </p>
             <button
               type="button"
               onClick={() => setShowRecordHelp(false)}
@@ -2089,19 +2084,21 @@ export function GameView({ gameId }: { gameId: string | null }) {
           ref={carouselViewportRef}
           className="flex-1 min-h-0 flex flex-col overflow-hidden"
           style={{ touchAction: "pan-y" }}
-          onTouchStart={handleCarouselTouchStart}
-          onTouchEnd={handleCarouselTouchEnd}
         >
-          {/* 당겨서 새로고침: 현재 섹션만 새로고침 */}
-          {(pullDistance > 0 || isRefreshing) && (
-            <div className="flex justify-center items-center py-2 text-slate-500 text-sm shrink-0" style={{ minHeight: pullDistance > 0 ? Math.min(pullDistance, 56) : 48 }}>
-              {isRefreshing ? (
-                <span className="animate-pulse">새로고침 중...</span>
-              ) : (
-                <span>↓ 당기면 새로고침</span>
-              )}
-            </div>
-          )}
+          {/* 당겨서 새로고침: 상단 핸들에서만 터치 처리 → 패널 영역은 세로 스크롤 방해 없음 */}
+          <div
+            ref={pullHandleRef}
+            className="shrink-0 min-h-[48px] flex justify-center items-center"
+            style={{ minHeight: pullDistance > 0 ? Math.min(pullDistance, 56) : 48 }}
+            onTouchStart={handleCarouselTouchStart}
+            onTouchEnd={handleCarouselTouchEnd}
+          >
+            {(pullDistance > 0 || isRefreshing) && (
+              <span className={`text-slate-500 text-sm ${isRefreshing ? "animate-pulse" : ""}`}>
+                {isRefreshing ? "새로고침 중..." : "↓ 당기면 새로고침"}
+              </span>
+            )}
+          </div>
           <div
             className="flex min-h-0 flex-1 overflow-hidden"
             style={{
@@ -2123,8 +2120,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               <div
                 ref={(el) => { panelScrollRefs.current[0] = el; }}
-                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
-                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
+                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
         <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
@@ -2303,8 +2300,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               <div
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
-                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
-                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
+                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
@@ -2529,8 +2526,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {selectedGameId && (
         <div
           key="record-detail"
-          className="absolute inset-0 pt-4 bg-[var(--background)] overflow-y-auto"
+          className="absolute inset-0 pt-4 bg-[var(--background)]"
           style={{
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            touchAction: "pan-y",
             animation: recordDetailClosing
               ? "slideOutToLeftOverlay 0.25s cubic-bezier(0.32, 0.72, 0, 1) forwards"
               : "slideInFromLeftOverlay 0.3s cubic-bezier(0.32, 0.72, 0, 1) forwards",
@@ -3220,8 +3220,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               <div
                 ref={(el) => { panelScrollRefs.current[2] = el; }}
-                className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
-                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
+                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
           <div key="myinfo" className="pt-4 space-y-2 animate-fade-in-up">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
