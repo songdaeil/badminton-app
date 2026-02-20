@@ -2087,7 +2087,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden">
         <div
           ref={carouselViewportRef}
-          className="flex-1 min-h-0 overflow-hidden"
+          className="flex-1 min-h-0 flex flex-col overflow-hidden"
           style={{ touchAction: "pan-y" }}
           onTouchStart={handleCarouselTouchStart}
           onTouchEnd={handleCarouselTouchEnd}
@@ -2103,7 +2103,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </div>
           )}
           <div
-            className="flex min-h-0 flex-1 h-full overflow-hidden"
+            className="flex min-h-0 flex-1 overflow-hidden"
             style={{
               width: carouselViewportWidth > 0 ? carouselViewportWidth * 3 : "300%",
               transform: carouselViewportWidth > 0
@@ -2293,7 +2293,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
               </div>
             </div>
-            {/* 패널 1: 경기 목록 - 스크롤만 네이티브로 동작하도록 탭 전용 터치 미등록 + 스크롤 영역 명확히 */}
+            {/* 패널 1: 경기 목록 - 뷰포트 flex로 트랙 높이 확보 후 flex-1 min-h-0 스크롤 */}
             <div
               className="shrink-0 flex flex-col h-full min-h-0 overflow-hidden"
               style={{
@@ -2304,7 +2304,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
-                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y", overflowY: "scroll" }}
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
