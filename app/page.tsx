@@ -1002,16 +1002,23 @@ export function GameView({ gameId }: { gameId: string | null }) {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
 
-  /** 터치: 패널 안 터치 시 아무것도 하지 않아 상하 스크롤이 항상 네이티브로 동작. 패널 밖(맨 위 여백)에서만 당겨서 새로고침. */
+  /** 터치: 경기 목록 탭에서는 리스너 미등록으로 상하 스크롤 100% 네이티브. 그 외 탭에서는 패널 안 터치 시 스크롤 방해 안 함. */
   useEffect(() => {
+    if (navIndex === 1) return;
     const viewport = carouselViewportRef.current;
     if (!viewport) return;
     const PULL_SLOP = 18;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
-      const activePanel = panelScrollRefs.current[navIndex];
-      if (activePanel && e.target instanceof Node && activePanel.contains(e.target)) return;
+      const target = e.target instanceof Node ? e.target : null;
+      if (target) {
+        for (let i = 0; i < 3; i++) {
+          const panel = panelScrollRefs.current[i];
+          if (panel && panel.contains(target)) return;
+        }
+      }
 
+      const activePanel = panelScrollRefs.current[navIndex];
       const dy = e.touches[0].clientY - touchStartRef.current.y;
       const lock = gestureLockRef.current;
       const atTop = (activePanel?.scrollTop ?? 0) <= 0;
@@ -2286,9 +2293,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
               </div>
             </div>
-            {/* 패널 1: 경기 목록 - 프로필 수정과 동일한 스크롤 구조 */}
+            {/* 패널 1: 경기 목록 - 스크롤만 네이티브로 동작하도록 탭 전용 터치 미등록 + 스크롤 영역 명확히 */}
             <div
-              className="shrink-0 flex flex-col h-full min-h-0"
+              className="shrink-0 flex flex-col h-full min-h-0 overflow-hidden"
               style={{
                 flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
                 width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
@@ -2297,7 +2304,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
-                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y", overflowY: "scroll" }}
               >
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
