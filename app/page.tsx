@@ -1002,16 +1002,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
 
-  /** 터치: 상하 스크롤은 항상 브라우저에 맡김. 당겨서 새로고침만 맨 위에서 아래로 당길 때만 처리. */
+  /** 터치: 패널 안 터치 시 아무것도 하지 않아 상하 스크롤이 항상 네이티브로 동작. 패널 밖(맨 위 여백)에서만 당겨서 새로고침. */
   useEffect(() => {
     const viewport = carouselViewportRef.current;
     if (!viewport) return;
-    const PULL_SLOP = 14;
+    const PULL_SLOP = 18;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
+      const activePanel = panelScrollRefs.current[navIndex];
+      if (activePanel && e.target instanceof Node && activePanel.contains(e.target)) return;
+
       const dy = e.touches[0].clientY - touchStartRef.current.y;
       const lock = gestureLockRef.current;
-      const activePanel = panelScrollRefs.current[navIndex];
       const atTop = (activePanel?.scrollTop ?? 0) <= 0;
 
       if (lock === null) {
@@ -2115,7 +2117,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div
                 ref={(el) => { panelScrollRefs.current[0] = el; }}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
-                style={{ WebkitOverflowScrolling: "touch" }}
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
         <div key="setting" className="space-y-2 pt-4 animate-fade-in-up">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
@@ -2295,7 +2297,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
-                style={{ WebkitOverflowScrolling: "touch" }}
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
@@ -3212,7 +3214,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div
                 ref={(el) => { panelScrollRefs.current[2] = el; }}
                 className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pl-2 pr-2"
-                style={{ WebkitOverflowScrolling: "touch" }}
+                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
           <div key="myinfo" className="pt-4 space-y-2 animate-fade-in-up">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
