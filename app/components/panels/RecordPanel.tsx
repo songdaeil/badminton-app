@@ -931,7 +931,7 @@ export function RecordPanel() {
                                     key={p.id}
                                     type="button"
                                     onClick={() =>
-                                      setHighlightMemberId((prev) => (prev === p.id ? null : p.id))
+                                      setHighlightMemberId(highlightMemberId === p.id ? null : p.id)
                                     }
                                     className={`block w-full text-left text-sm leading-none truncate rounded px-0.5 -mx-0.5 font-medium text-slate-700 hover:bg-slate-100 ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
                                     title={
@@ -1028,7 +1028,7 @@ export function RecordPanel() {
                                     key={p.id}
                                     type="button"
                                     onClick={() =>
-                                      setHighlightMemberId((prev) => (prev === p.id ? null : p.id))
+                                      setHighlightMemberId(highlightMemberId === p.id ? null : p.id)
                                     }
                                     className={`block w-full text-right text-sm leading-none truncate rounded px-0.5 -mx-0.5 font-medium text-slate-700 hover:bg-slate-100 ${highlightMemberId && !isHighlight ? "opacity-90" : ""}`}
                                     title={
