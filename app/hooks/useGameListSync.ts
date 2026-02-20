@@ -116,8 +116,10 @@ export function useGameListSync(
     unsubSharedRef.current.forEach((u) => u());
     unsubSharedRef.current = [];
     entries.forEach((e) => {
-      const unsub = subscribeSharedGame(e.shareId, (data) => {
-        saveGame(e.id, { ...data, shareId: e.shareId });
+      const shareId = e.shareId;
+      if (!shareId) return;
+      const unsub = subscribeSharedGame(shareId, (data) => {
+        saveGame(e.id, { ...data, shareId });
         onListChange();
       });
       if (unsub) unsubSharedRef.current.push(unsub);
