@@ -561,14 +561,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   /** 캐러셀: 가로 드래그 시 옆 섹션 비치는 오프셋(px) */
-  const [carouselDragOffset, setCarouselDragOffset] = useState(0);
-  /** 캐러셀 뷰포트 너비(px) - 패널·트랜스폼 정확 정렬용 */
-  const [carouselViewportWidth, setCarouselViewportWidth] = useState(0);
   const carouselViewportRef = useRef<HTMLDivElement>(null);
   const pullHandleRef = useRef<HTMLDivElement>(null);
   const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
-  /** 경기 목록 패널의 실제 스크롤 컨테이너(목록 카드 영역). 당겨서 새로고침 atTop 판단용 */
-  const recordListScrollRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef({ x: 0, y: 0 });
   /** 가로 스와이프 vs 세로 스크롤/당겨서새로고침 결정 후 유지 */
   const gestureLockRef = useRef<"v" | "pull" | null>(null);
@@ -989,17 +984,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
     gestureLockRef.current = null;
   }, [pullDistance, isRefreshing, refreshCurrentSection]);
 
-  /** 캐러셀 뷰포트 너비 측정 (패널 정확 정렬용) */
-  useEffect(() => {
-    const viewport = carouselViewportRef.current;
-    if (!viewport) return;
-    const update = () => setCarouselViewportWidth(viewport.offsetWidth);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(viewport);
-    return () => ro.disconnect();
-  }, []);
-
   /** 경기 목록 상세·프로필 수정 열림 시 캐러셀 스와이프 무시용 ref 동기화 */
   useEffect(() => {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
@@ -1014,8 +998,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
       if (overlayOpenRef.current) return;
       const dy = e.touches[0].clientY - touchStartRef.current.y;
       const lock = gestureLockRef.current;
-      const scrollEl = navIndex === 1 ? recordListScrollRef.current : panelScrollRefs.current[navIndex];
-      const atTop = (scrollEl?.scrollTop ?? 0) <= 0;
+      const activePanel = panelScrollRefs.current[navIndex];
+      const atTop = (activePanel?.scrollTop ?? 0) <= 0;
 
       if (lock === null) {
         if (dy > PULL_SLOP && atTop) {
@@ -2101,25 +2085,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </span>
             )}
           </div>
-          <div
-            className="flex min-h-0 flex-1 overflow-hidden"
-            style={{
-              width: carouselViewportWidth > 0 ? carouselViewportWidth * 3 : "300%",
-              transform: carouselViewportWidth > 0
-                ? `translateX(${-navIndex * carouselViewportWidth + carouselDragOffset}px)`
-                : `translateX(calc(-${navIndex} * 33.333% + ${carouselDragOffset}px))`,
-              transition: carouselDragOffset === 0 ? "transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)" : "none",
-              willChange: carouselDragOffset !== 0 ? "transform" : "auto",
-            }}
-          >
-            {/* 패널 0: 경기 방식 - 프로필 수정 오버레이와 동일한 스크롤 구조 */}
-            <div
-              className="shrink-0 flex flex-col h-full min-h-0"
-              style={{
-                flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
-                width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
-              }}
-            >
+          {/* transform 없이 현재 탭 패널만 렌더 → iOS 등에서 상하 스크롤 정상 동작 */}
+          <div className="flex-1 min-h-0 overflow-hidden w-full">
+            {navIndex === 0 && (
+            <div className="w-full h-full flex flex-col min-h-0">
               <div
                 ref={(el) => { panelScrollRefs.current[0] = el; }}
                 className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
@@ -2292,28 +2261,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
               </div>
             </div>
-            {/* 패널 1: 경기 목록 - 뷰포트 flex로 트랙 높이 확보 후 flex-1 min-h-0 스크롤 */}
-            <div
-              className="shrink-0 flex flex-col h-full min-h-0 overflow-hidden"
-              style={{
-                flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
-                width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
-              }}
-            >
+            )}
+            {navIndex === 1 && (
+            <div className="w-full h-full flex flex-col min-h-0 overflow-hidden">
               <div
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
-                className="flex-1 min-h-0 relative overflow-hidden pl-2 pr-2"
+                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
+                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
               >
-        <div key="record-wrap" className="absolute inset-0">
+        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
         {!selectedGameId && (
-        /* 경기 목록: 상세와 동일하게 absolute inset-0 + overflow-y auto 로 스크롤 → 카드 위에서도 상하 스크롤 동작 */
-        <div
-          ref={recordListScrollRef}
-          key="record-list-scroll"
-          className="absolute inset-0 pt-4 pb-28"
-          style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y", overscrollBehavior: "contain" }}
-        >
-        <div key="record-list" className="space-y-0.5 animate-fade-in-up min-h-[70vh]">
+        <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
             void listRefreshKey;
             const gameIds = loadGameList();
@@ -2529,7 +2487,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </ul>
             );
           })()}
-        </div>
         </div>
         )}
 
@@ -3220,14 +3177,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
               </div>
             </div>
-            {/* 패널 2: 경기 이사 - 프로필 수정과 동일한 스크롤 구조 */}
-            <div
-              className="shrink-0 flex flex-col h-full min-h-0"
-              style={{
-                flex: carouselViewportWidth > 0 ? `0 0 ${carouselViewportWidth}px` : "0 0 33.333%",
-                width: carouselViewportWidth > 0 ? carouselViewportWidth : undefined,
-              }}
-            >
+            )}
+            {navIndex === 2 && (
+            <div className="w-full h-full flex flex-col min-h-0 overflow-hidden">
               <div
                 ref={(el) => { panelScrollRefs.current[2] = el; }}
                 className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
@@ -3446,8 +3398,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
             )}
           </div>
           </div>
-        </div>
-        </div>
+          </div>
+            )}
+          </div>
         </div>
       </main>
 
