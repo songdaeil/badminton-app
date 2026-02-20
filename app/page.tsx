@@ -557,8 +557,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
     authUid,
     useCallback(() => setListRefreshKey((k) => k + 1), [])
   );
-  const carouselViewportRef = useRef<HTMLDivElement>(null);
-  const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
   /** 경기 목록 상세·프로필 수정 등 섹션 하위 오버레이 열림 시 true → 캐러셀 스와이프 무시 */
   const overlayOpenRef = useRef(false);
   /** 오버레이(도움말·확인 모달) 스와이프 제스처용 */
@@ -1978,21 +1976,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </>
       )}
 
-      <main className="flex-1 min-h-0 flex flex-col px-2 pb-24 overflow-hidden scroll-smooth">
-        <div
-          ref={carouselViewportRef}
-          className="flex-1 min-h-0 flex flex-col overflow-hidden"
-          style={{ touchAction: "pan-y" }}
-        >
-          {/* 현재 탭 패널만 렌더 → iOS 등에서 상하 스크롤 정상 동작 */}
-          <div className="flex-1 min-h-0 overflow-hidden w-full">
-            {navIndex === 0 && (
-            <div className="w-full h-full flex flex-col min-h-0">
-              <div
-                ref={(el) => { panelScrollRefs.current[0] = el; }}
-                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
-                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
-              >
+      <main className="flex-1 px-2 pb-24 overflow-auto scroll-smooth">
+        {navIndex === 0 && (
         <div key="setting" className="space-y-2 pt-4 animate-panel-enter">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
@@ -2158,17 +2143,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
         </section>
         </div>
-              </div>
-            </div>
-            )}
-            {navIndex === 1 && (
-            <div className="w-full h-full flex flex-col min-h-0 overflow-hidden">
-              <div
-                id="record-list-scroll"
-                ref={(el) => { panelScrollRefs.current[1] = el; }}
-                className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain pl-2 pr-2 relative"
-                style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
-              >
+        )}
+        {navIndex === 1 && (
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh] w-full animate-panel-enter">
         {!selectedGameId && (
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
@@ -3075,16 +3051,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
         </div>
-              </div>
-            </div>
-            )}
-            {navIndex === 2 && (
-            <div className="w-full h-full flex flex-col min-h-0 overflow-hidden">
-              <div
-                ref={(el) => { panelScrollRefs.current[2] = el; }}
-                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2"
-                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
-              >
+        )}
+        {navIndex === 2 && (
           <div key="myinfo" className="pt-4 space-y-2 animate-panel-enter">
             {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
             {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
@@ -3297,11 +3265,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
             )}
           </div>
-          </div>
-          </div>
-            )}
-          </div>
-        </div>
+        )}
       </main>
 
       {/* 하단 네비 - 블러·미니멀 (프로필 업로드 전에는 경기 방식·경기 목록 비활성) */}
