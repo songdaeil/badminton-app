@@ -567,6 +567,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const carouselViewportRef = useRef<HTMLDivElement>(null);
   const pullHandleRef = useRef<HTMLDivElement>(null);
   const panelScrollRefs = useRef<(HTMLDivElement | null)[]>([null, null, null]);
+  /** 경기 목록 패널의 실제 스크롤 컨테이너(목록 카드 영역). 당겨서 새로고침 atTop 판단용 */
+  const recordListScrollRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef({ x: 0, y: 0 });
   /** 가로 스와이프 vs 세로 스크롤/당겨서새로고침 결정 후 유지 */
   const gestureLockRef = useRef<"v" | "pull" | null>(null);
@@ -1010,10 +1012,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const PULL_SLOP = 18;
     const onMove = (e: TouchEvent) => {
       if (overlayOpenRef.current) return;
-      const activePanel = panelScrollRefs.current[navIndex];
       const dy = e.touches[0].clientY - touchStartRef.current.y;
       const lock = gestureLockRef.current;
-      const atTop = (activePanel?.scrollTop ?? 0) <= 0;
+      const scrollEl = navIndex === 1 ? recordListScrollRef.current : panelScrollRefs.current[navIndex];
+      const atTop = (scrollEl?.scrollTop ?? 0) <= 0;
 
       if (lock === null) {
         if (dy > PULL_SLOP && atTop) {
@@ -2300,13 +2302,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               <div
                 ref={(el) => { panelScrollRefs.current[1] = el; }}
-                className="flex-1 min-h-0 overflow-x-hidden overscroll-contain pl-2 pr-2 relative"
-                style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+                className="flex-1 min-h-0 relative overflow-hidden pl-2 pr-2"
               >
-        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh]">
+        <div key="record-wrap" className="absolute inset-0">
         {!selectedGameId && (
-        /* 경기 목록: listRefreshKey 변경 시 재렌더로 최신 데이터 표시(공유 경기 실시간 동기화 반영). 하단 여백으로 카드 위에서도 위아래 스크롤 가능 */
-        <div key="record-list" className="space-y-0.5 animate-fade-in-up">
+        /* 경기 목록: 상세와 동일하게 absolute inset-0 + overflow-y auto 로 스크롤 → 카드 위에서도 상하 스크롤 동작 */
+        <div
+          ref={recordListScrollRef}
+          key="record-list-scroll"
+          className="absolute inset-0 pt-4 pb-28"
+          style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", touchAction: "pan-y", overscrollBehavior: "contain" }}
+        >
+        <div key="record-list" className="space-y-0.5 animate-fade-in-up min-h-[70vh]">
           {(() => {
             void listRefreshKey;
             const gameIds = loadGameList();
@@ -2522,6 +2529,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </ul>
             );
           })()}
+        </div>
         </div>
         )}
 
