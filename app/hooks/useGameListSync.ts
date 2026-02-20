@@ -64,14 +64,15 @@ export function useGameListSync(
         return;
       }
       if (opts?.added != null) {
+        const addedId: string = opts.added;
         getUserGameList(authUid).then((remote) => {
-          if (remote.some((e) => e.id === opts.added)) {
+          if (remote.some((e) => e.id === addedId)) {
             applyMerged(remote);
             return;
           }
           const merged: GameListEntry[] = [
             ...remote,
-            { id: opts.added, shareId: loadGame(opts.added).shareId ?? null },
+            { id: addedId, shareId: loadGame(addedId).shareId ?? null },
           ];
           setUserGameList(authUid, merged).then((ok) => {
             if (ok) applyMerged(merged);
