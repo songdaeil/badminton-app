@@ -487,8 +487,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [emailLoading, setEmailLoading] = useState(false);
   /** 이메일 인증 대기: Firebase Auth 이메일 사용자(미인증 시 활동 불가) */
   const [authEmailUser, setAuthEmailUser] = useState<AuthUserSnapshot>(null);
-  /** 하단 네비로 이동하는 화면: setting(경기 세팅) | record(경기 목록) | myinfo(나의 정보) */
-  const [navView, setNavView] = useState<"setting" | "record" | "myinfo">("setting");
+  /** 하단 네비로 이동하는 화면: setting(경기 세팅) | record(경기 목록) | myinfo(나의 정보). 새로고침 시 마지막 탭 복원 */
+  const [navView, setNavView] = useState<"setting" | "record" | "myinfo">(() => {
+    if (typeof window === "undefined") return "setting";
+    const saved = sessionStorage.getItem("badminton_nav_view");
+    if (saved === "record" || saved === "myinfo") return saved;
+    return "setting";
+  });
   /** 경기 목록에서 선택한 경기 id (목록에서 하나 고르면 이 경기 로드) */
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   /** 경기 목록 카드별 ... 메뉴 열린 카드 id */
@@ -565,6 +570,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const mainRef = useRef<HTMLElement | null>(null);
   /** 당겨서 새로고침: 터치 시작 시 Y·scrollTop, 터치 중 최대 당긴 거리 */
   const pullRef = useRef({ startY: 0, startScrollTop: 0, maxPull: 0 });
+  /** 당겨서 새로고침 제스처가 시작된 시점의 섹션 (프로필 덮어쓰기는 나의 정보에서만 수행) */
+  const pullSectionRef = useRef<"setting" | "record" | "myinfo">("setting");
   /** 경기 방식 섹션 재렌더 트리거 */
   const [settingRefreshKey, setSettingRefreshKey] = useState(0);
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
@@ -871,6 +878,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (typeof window === "undefined") return;
     if (sessionStorage.getItem(LOGIN_GATE_KEY) === "1") setLoginGatePassed(true);
   }, []);
+
+  /** 탭 전환 시 sessionStorage에 저장 → 새로고침 시 해당 탭 유지 */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem("badminton_nav_view", navView);
+  }, [navView]);
 
   /** 로그인 UID 구독 (프로필 Firestore 동기화용) */
   useEffect(() => {
