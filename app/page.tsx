@@ -561,6 +561,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const overlayOpenRef = useRef(false);
   /** 오버레이(도움말·확인 모달) 스와이프 제스처용 */
   const overlayTouchStartRef = useRef({ x: 0, y: 0 });
+  /** 본문 스크롤 영역 (당겨서 새로고침·백키 처리용) */
+  const mainRef = useRef<HTMLElement | null>(null);
+  /** 당겨서 새로고침: 터치 시작 시 Y·scrollTop, 터치 중 최대 당긴 거리 */
+  const pullRef = useRef({ startY: 0, startScrollTop: 0, maxPull: 0 });
+  /** 경기 방식 섹션 재렌더 트리거 */
+  const [settingRefreshKey, setSettingRefreshKey] = useState(0);
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
   const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
   const effectiveGameId = gameId ?? selectedGameId;
@@ -915,12 +921,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 업로드까지 했고, 현재 프로필에 필수 항목이 모두 있으면 완성 (아이콘 채움·경기 방식/목록 이용 가능) */
   const isProfileComplete = hasUploadedProfileAfterLogin && hasRequiredProfileFields();
 
-  /** 프로필 완성 전에는 경기 방식·경기 목록 비활성: 해당 탭이면 myinfo로 이동 */
-  useEffect(() => {
-    if (!authUid || isProfileComplete) return;
-    if (navView === "setting" || navView === "record") setNavView("myinfo");
-  }, [authUid, isProfileComplete, navView]);
-
   const NAV_ORDER: ("setting" | "record" | "myinfo")[] = ["setting", "record", "myinfo"];
   const navIndex = NAV_ORDER.indexOf(navView);
 
@@ -928,6 +928,93 @@ export function GameView({ gameId }: { gameId: string | null }) {
   useEffect(() => {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
   }, [selectedGameId, profileEditOpen, profileEditClosing]);
+
+  /** 현재 탭 섹션 새로고침 (당겨서 새로고침 시 호출) */
+  const doSectionRefresh = useCallback(() => {
+    if (navView === "setting") setSettingRefreshKey((k) => k + 1);
+    else if (navView === "record") refreshListFromRemote();
+    else if (navView === "myinfo" && authUid) {
+      getRemoteProfile(authUid).then((remote) => {
+        const withUid = { ...(remote ?? {}), uid: authUid } as MyInfo;
+        if (!withUid.name) withUid.name = "";
+        if (!withUid.gender) withUid.gender = "M";
+        setMyInfo(withUid);
+        saveMyInfo(withUid);
+        setHasUploadedProfileAfterLogin(!!remote);
+      });
+    }
+  }, [navView, authUid, refreshListFromRemote]);
+
+  const PULL_THRESHOLD = 56;
+
+  /** 당겨서 새로고침: 터치 시작 */
+  const handleMainTouchStart = useCallback((e: React.TouchEvent) => {
+    const el = mainRef.current;
+    if (!el || e.touches.length === 0) return;
+    pullRef.current = { startY: e.touches[0].clientY, startScrollTop: el.scrollTop, maxPull: 0 };
+  }, []);
+
+  /** 당겨서 새로고침: 터치 이동 (맨 위에서만 당긴 거리 누적) */
+  const handleMainTouchMove = useCallback((e: React.TouchEvent) => {
+    const el = mainRef.current;
+    if (!el || e.touches.length === 0) return;
+    const { startY, startScrollTop } = pullRef.current;
+    if (startScrollTop > 2) return;
+    if (el.scrollTop > 2) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0) pullRef.current.maxPull = Math.max(pullRef.current.maxPull, dy);
+  }, []);
+
+  /** 당겨서 새로고침: 터치 종료 시 임계치 넘으면 섹션 새로고침 */
+  const handleMainTouchEnd = useCallback(() => {
+    if (pullRef.current.maxPull >= PULL_THRESHOLD) doSectionRefresh();
+    pullRef.current = { startY: 0, startScrollTop: 0, maxPull: 0 };
+  }, [doSectionRefresh]);
+
+  /** 백키 처리: 하위 레벨이면 상위로, 최상위면 백그라운드 (ref로 최신 값 참조) */
+  const backKeyStateRef = useRef({ selectedGameId, profileEditOpen, profileEditClosing, showRegenerateConfirm, showGameModeHelp, showRecordHelp });
+  backKeyStateRef.current = { selectedGameId, profileEditOpen, profileEditClosing, showRegenerateConfirm, showGameModeHelp, showRecordHelp };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !loginGatePassed) return;
+    const state = { app: "badminton-root" };
+    history.pushState(state, "", window.location.href);
+    const handlePop = () => {
+      const s = backKeyStateRef.current;
+      if (s.selectedGameId) {
+        setSelectedGameId(null);
+        setListMenuOpenId(null);
+        history.pushState(state, "", window.location.href);
+        return;
+      }
+      if (s.profileEditOpen || s.profileEditClosing) {
+        setProfileEditClosing(true);
+        setProfileEditOpen(false);
+        setTimeout(() => setProfileEditClosing(false), 250);
+        history.pushState(state, "", window.location.href);
+        return;
+      }
+      if (s.showRegenerateConfirm) {
+        setShowRegenerateConfirm(false);
+        history.pushState(state, "", window.location.href);
+        return;
+      }
+      if (s.showGameModeHelp) {
+        setShowGameModeHelp(false);
+        history.pushState(state, "", window.location.href);
+        return;
+      }
+      if (s.showRecordHelp) {
+        setShowRecordHelp(false);
+        history.pushState(state, "", window.location.href);
+        return;
+      }
+      history.pushState(state, "", window.location.href);
+      window.blur();
+    };
+    window.addEventListener("popstate", handlePop);
+    return () => window.removeEventListener("popstate", handlePop);
+  }, [loginGatePassed]);
 
   /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
   const uploadProfileToFirestore = useCallback(async () => {
@@ -1976,9 +2063,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </>
       )}
 
-      <main className="flex-1 px-2 pb-24 overflow-auto scroll-smooth">
+      <main
+        ref={mainRef}
+        className="flex-1 px-2 pb-24 overflow-auto scroll-smooth"
+        onTouchStart={handleMainTouchStart}
+        onTouchMove={handleMainTouchMove}
+        onTouchEnd={handleMainTouchEnd}
+      >
         {navIndex === 0 && (
-        <div key="setting" className="space-y-2 pt-4 animate-panel-enter">
+        <div key={`setting-${settingRefreshKey}`} className="space-y-2 pt-4 animate-panel-enter">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden min-w-0 card-app card-app-interactive">
