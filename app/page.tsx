@@ -473,7 +473,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 로그인한 사용자 UID (프로필 Firestore 동기화용) */
   const [authUid, setAuthUid] = useState<string | null>(null);
   /** 로그인 후 프로필 업로드 완료 여부 (true: 원격 로드됨 또는 업로드 성공. 이전에만 경기 방식·경기 목록 이용 가능) */
-  const [hasUploadedProfileAfterLogin, setHasUploadedProfileAfterLogin] = useState(false);
+  const [hasUploadedProfileAfterLogin, _setHasUploadedProfile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("badminton_profile_uploaded") === "1";
+  });
+  const setHasUploadedProfileAfterLogin = useCallback((v: boolean) => {
+    _setHasUploadedProfile(v);
+    if (typeof window !== "undefined") {
+      if (v) localStorage.setItem("badminton_profile_uploaded", "1");
+      else localStorage.removeItem("badminton_profile_uploaded");
+    }
+  }, []);
   /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
   const [phoneStep, setPhoneStep] = useState<"idle" | "sending" | "code" | "error">("idle");
   const [phoneNumberInput, setPhoneNumberInput] = useState("");
