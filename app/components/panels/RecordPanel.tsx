@@ -649,21 +649,21 @@ export function RecordPanel() {
                 </table>
               </div>
               <div className="border-t border-[#e8e8ed] px-2 py-2">
-                <div className="flex flex-row items-center gap-2 flex-wrap">
-                  <span className="text-xs font-medium text-slate-600 shrink-0">인원 추가</span>
+                <div className="flex flex-row items-center gap-1.5 flex-nowrap overflow-hidden">
+                  <span className="text-xs font-medium text-slate-600 shrink-0 whitespace-nowrap">인원 추가</span>
                   <input
                     type="text"
                     value={newMemberName}
                     onChange={(e) => setNewMemberName(e.target.value)}
                     placeholder="이름"
                     aria-label="이름"
-                    className="flex-1 min-w-[4rem] h-9 px-3 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] box-border"
+                    className="flex-1 min-w-0 h-9 px-2 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] box-border"
                   />
                   <select
                     value={newMemberGender}
                     onChange={(e) => setNewMemberGender(e.target.value as "M" | "F")}
                     aria-label="성별"
-                    className="shrink-0 w-16 h-9 px-2 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                    className="shrink-0 w-14 h-9 px-1.5 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   >
                     <option value="M">남</option>
                     <option value="F">여</option>
@@ -672,7 +672,7 @@ export function RecordPanel() {
                     value={newMemberGrade}
                     onChange={(e) => setNewMemberGrade(e.target.value as Grade)}
                     aria-label="급수"
-                    className="shrink-0 w-14 h-9 px-2 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                    className="shrink-0 w-12 h-9 px-1.5 py-0 text-sm rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   >
                     <option value="A">A</option>
                     <option value="B">B</option>
@@ -694,7 +694,7 @@ export function RecordPanel() {
                       addMember(trimmed, newMemberGender, newMemberGrade);
                       setNewMemberName("");
                     }}
-                    className="shrink-0 h-9 px-4 rounded-lg text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+                    className="shrink-0 h-9 px-3 rounded-lg text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
                   >
                     추가
                   </button>

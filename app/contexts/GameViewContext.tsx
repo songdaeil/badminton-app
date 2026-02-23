@@ -90,7 +90,7 @@ export interface GameViewContextValue {
   setShareToast: (v: string | null) => void;
   encodeGameForShare: (data: import("@/lib/game-storage").GameData) => string;
   lastFirestoreUploadBytes: number | null;
-  syncGameListToFirebase: (opts?: { added?: string; removed?: string }) => void;
+  syncGameListToFirebase: (opts?: { added?: string; removed?: string; removedShareId?: string }) => void;
   removeGameFromList: (gameId: string) => void;
   refreshListFromRemote: () => void;
   handleDeleteCard: (gameId: string) => void;
