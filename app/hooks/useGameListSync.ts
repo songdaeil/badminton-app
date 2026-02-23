@@ -205,7 +205,7 @@ export function useGameListSync(
   }, [authUid, handleServerList, applyResolvedList, ensureSubscriptionsForCurrentList]);
 
   const syncGameListToFirebase = useCallback(
-    (opts?: { added?: string; removed?: string }) => {
+    (opts?: { added?: string; removed?: string; removedShareId?: string }) => {
       if (!authUid || !isSyncAvailable()) return;
       if (opts?.removed != null) {
         const removedId = opts.removed;
