@@ -1,10 +1,8 @@
 "use client";
 
 /**
- * 경기 목록 동기화 (한 줄 요약)
- * - 소스: Firebase userGameLists/{uid} 단일 소스.
- * - 계정 전환: 로컬 목록 비우기 → 서버에서 목록 가져와 적용.
- * - 적용: 서버 항목을 로컬 id로 해석 → 로컬 저장 → 공유 경기 실시간 구독.
+ * 경기 목록 동기화: 로그인 UID 기준, Firebase userGameLists/{uid}만 소스.
+ * UID가 정해지면 로컬 목록 비우고 → 서버에서 받은 목록만 적용해 화면에 반영.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -136,13 +134,12 @@ export function useGameListSync(
   useEffect(() => {
     if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
 
-    if (prevAuthUidRef.current !== authUid) {
-      prevAuthUidRef.current = authUid;
-      saveGameList([]);
-      onListChange();
-    }
+    // 이 UID 기준으로만 표시: 로컬 비우고 Firebase에서만 채움 (다른 계정 목록 노출 방지)
+    prevAuthUidRef.current = authUid;
+    saveGameList([]);
+    onListChange();
 
-    // 1) 서버 목록 한 번 가져와서 적용 (구독이 곧바로 최신으로 덮어씀)
+    // 1) 서버 목록 가져와서 적용 (구독도 같은 콜백으로 최신 유지)
     getUserGameList(authUid).then(applyServerList).catch(() => {});
 
     // 2) "내가 만든 공유 경기" 중 목록에 없는 것만 Firebase에 추가 → 구독으로 반영
@@ -189,6 +186,7 @@ export function useGameListSync(
     };
   }, [authUid, applyServerList, ensureSubscriptionsForCurrentList]);
 
+  /** 경기 추가/삭제 시 현재 UID의 Firebase 목록만 갱신. (로컬 전체 merge 없음 → UID 기준 단일 소스 유지) */
   const syncGameListToFirebase = useCallback(
     (opts?: { added?: string; removed?: string; removedShareId?: string }) => {
       if (!authUid || !isSyncAvailable()) return;
@@ -207,14 +205,7 @@ export function useGameListSync(
         const addedId: string = opts.added;
         const toAdd: GameListEntry = { id: addedId, shareId: loadGame(addedId).shareId ?? null };
         mergeUserGameList(authUid, [toAdd]).catch(() => {});
-        return;
       }
-      const localIds = loadGameList();
-      const toMerge: GameListEntry[] = localIds.map((id) => ({
-        id,
-        shareId: loadGame(id).shareId ?? null,
-      }));
-      mergeUserGameList(authUid, toMerge).catch(() => {});
     },
     [authUid]
   );
