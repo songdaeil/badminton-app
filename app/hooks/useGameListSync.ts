@@ -140,19 +140,31 @@ export function useGameListSync(
   useEffect(() => {
     if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
 
+    const GAME_LIST_LAST_UID_KEY = "badminton-game-list-uid";
+
     getUserGameList(authUid)
       .then((remote) => {
         const deduped = dedupeByShareId(remote);
         const localIds = loadGameList();
+        const lastSyncedUid = typeof window !== "undefined" ? localStorage.getItem(GAME_LIST_LAST_UID_KEY) : null;
+
         if (deduped.length === 0 && localIds.length > 0) {
-          const toMerge: GameListEntry[] = localIds.map((id) => ({
-            id,
-            shareId: loadGame(id)?.shareId ?? null,
-          }));
-          return mergeUserGameList(authUid, toMerge).then(() => {});
+          if (lastSyncedUid === authUid) {
+            const toMerge: GameListEntry[] = localIds.map((id) => ({
+              id,
+              shareId: loadGame(id)?.shareId ?? null,
+            }));
+            return mergeUserGameList(authUid, toMerge).then(() => {
+              if (typeof window !== "undefined") localStorage.setItem(GAME_LIST_LAST_UID_KEY, authUid);
+            });
+          }
+          applyResolvedList([]);
+          if (typeof window !== "undefined") localStorage.setItem(GAME_LIST_LAST_UID_KEY, authUid);
+          return;
         }
         return resolveToLocalEntries(deduped).then((resolved) => {
           applyResolvedList(resolved);
+          if (typeof window !== "undefined") localStorage.setItem(GAME_LIST_LAST_UID_KEY, authUid);
           mergeUserGameList(authUid, resolved).then(() => {});
         });
       })
