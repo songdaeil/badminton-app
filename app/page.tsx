@@ -762,90 +762,97 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
   }, [effectiveGameId]);
 
-  /** 공유 링크(?share=...) 로 들어온 경우: 동기화 문서 있으면 Firestore에서 로드, 없으면 base64 디코드. 동일 shareId 중복 추가 방지 */
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const share = searchParams.get("share");
-    if (!share) return;
-    const existingIds = loadGameList();
-    const alreadyImportedId = existingIds.find(
-      (id) => loadGame(id).shareId === share || loadGame(id).importedFromShare === share
-    );
-    if (alreadyImportedId != null) {
-      setNavView("record");
-      setSelectedGameId(null);
-      router.replace("/?view=record");
-      sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-      setLoginGatePassed(true);
-      return;
-    }
-    // Firestore 동기화: 먼저 getSharedGame 시도(내부에서 ensureFirebase 호출). 없으면 구형 base64 링크 시도
-    const passGateFromShare = () => {
-      sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-      setLoginGatePassed(true);
-    };
-    getSharedGame(share).then((data) => {
-      if (data) {
+  /** 공유 경기 로드 후 해당 경기 상세로 진입 (목록 추가·URL 정리). 게이트 통과는 호출 쪽에서 처리 */
+  const processShareAndOpenDetail = useCallback(
+    (share: string) => {
+      const existingIds = loadGameList();
+      const alreadyImportedId = existingIds.find(
+        (id) => loadGame(id).shareId === share || loadGame(id).importedFromShare === share
+      );
+      if (alreadyImportedId != null) {
+        setNavView("record");
+        setSelectedGameId(alreadyImportedId);
+        router.replace("/?view=record", { scroll: false });
+        return;
+      }
+      getSharedGame(share).then((data) => {
+        if (data) {
+          const newId = createGameId();
+          saveGame(newId, {
+            ...data,
+            playingMatchIds: data.playingMatchIds ?? [],
+            shareId: share,
+          });
+          addGameToList(newId);
+          syncGameListToFirebase({ added: newId });
+          setNavView("record");
+          setSelectedGameId(newId);
+          router.replace("/?view=record", { scroll: false });
+          return;
+        }
+        const fallback = decodeGameFromShare(share);
+        if (!fallback) return;
+        let merged = fallback;
+        if (!merged.createdByName && merged.createdBy) {
+          const name = merged.members.find((m) => m.id === merged!.createdBy)?.name;
+          if (name) merged = { ...merged, createdByName: name };
+        }
         const newId = createGameId();
         saveGame(newId, {
-          ...data,
-          playingMatchIds: data.playingMatchIds ?? [],
-          shareId: share,
+          ...merged,
+          createdAt: merged.createdAt ?? new Date().toISOString(),
+          createdBy: merged.createdBy ?? null,
+          createdByName: merged.createdByName ?? null,
+          playingMatchIds: [],
+          importedFromShare: share,
         });
         addGameToList(newId);
         syncGameListToFirebase({ added: newId });
         setNavView("record");
-        setSelectedGameId(null);
-        router.replace("/?view=record");
-        passGateFromShare();
-        return;
-      }
-      const fallback = decodeGameFromShare(share);
-      if (!fallback) return;
-      let merged = fallback;
-      if (!merged.createdByName && merged.createdBy) {
-        const name = merged.members.find((m) => m.id === merged!.createdBy)?.name;
-        if (name) merged = { ...merged, createdByName: name };
-      }
-      const newId = createGameId();
-      saveGame(newId, {
-        ...merged,
-        createdAt: merged.createdAt ?? new Date().toISOString(),
-        createdBy: merged.createdBy ?? null,
-        createdByName: merged.createdByName ?? null,
-        playingMatchIds: [],
-        importedFromShare: share,
+        setSelectedGameId(newId);
+        router.replace("/?view=record", { scroll: false });
+      }).catch(() => {
+        const data = decodeGameFromShare(share);
+        if (!data) return;
+        if (!data.createdByName && data.createdBy) {
+          const name = data.members.find((m) => m.id === data.createdBy)?.name;
+          if (name) Object.assign(data, { createdByName: name });
+        }
+        const newId = createGameId();
+        saveGame(newId, {
+          ...data,
+          createdAt: data.createdAt ?? new Date().toISOString(),
+          createdBy: data.createdBy ?? null,
+          createdByName: data.createdByName ?? null,
+          playingMatchIds: [],
+          importedFromShare: share,
+        });
+        addGameToList(newId);
+        syncGameListToFirebase({ added: newId });
+        setNavView("record");
+        setSelectedGameId(newId);
+        router.replace("/?view=record", { scroll: false });
       });
-      addGameToList(newId);
-      syncGameListToFirebase({ added: newId });
-      setNavView("record");
-      setSelectedGameId(null);
-      router.replace("/?view=record");
-      passGateFromShare();
-    }).catch(() => {
-      const data = decodeGameFromShare(share);
-      if (!data) return;
-      if (!data.createdByName && data.createdBy) {
-        const name = data.members.find((m) => m.id === data.createdBy)?.name;
-        if (name) Object.assign(data, { createdByName: name });
-      }
-      const newId = createGameId();
-      saveGame(newId, {
-        ...data,
-        createdAt: data.createdAt ?? new Date().toISOString(),
-        createdBy: data.createdBy ?? null,
-        createdByName: data.createdByName ?? null,
-        playingMatchIds: [],
-        importedFromShare: share,
-      });
-      addGameToList(newId);
-      syncGameListToFirebase({ added: newId });
-      setNavView("record");
-      setSelectedGameId(null);
-      router.replace("/?view=record");
-      passGateFromShare();
-    });
-  }, [searchParams, router, gameId, syncGameListToFirebase]);
+    },
+    [router, syncGameListToFirebase]
+  );
+
+  const PENDING_SHARE_KEY = "badminton_pending_share";
+
+  /** 공유 링크(?share=...) 진입: 로그인 안 됐으면 share만 보관 후 로그인 유도. 로그인됐으면 경기 로드 후 상세 진입 */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const share = searchParams.get("share");
+    if (!share) return;
+    if (!authUid) {
+      sessionStorage.setItem(PENDING_SHARE_KEY, share);
+      return;
+    }
+    sessionStorage.removeItem(PENDING_SHARE_KEY);
+    sessionStorage.setItem(LOGIN_GATE_KEY, "1");
+    setLoginGatePassed(true);
+    processShareAndOpenDetail(share);
+  }, [searchParams, authUid, processShareAndOpenDetail]);
 
   /** 경기 목록 탭에서 공유(shareId) 경기 카드를 Firestore 최신 데이터로 갱신 → 카드가 항상 최신으로 동기화 표시. 진입 시 1회 + 25초마다 갱신 */
   useEffect(() => {
@@ -888,6 +895,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (typeof window === "undefined") return;
     if (sessionStorage.getItem(LOGIN_GATE_KEY) === "1") setLoginGatePassed(true);
   }, []);
+
+  /** 로그인 통과 직후: 공유 링크로 들어와 대기 중이던 share가 있으면 경기 로드 후 상세 진입 */
+  useEffect(() => {
+    if (!loginGatePassed || typeof window === "undefined") return;
+    const pending = sessionStorage.getItem(PENDING_SHARE_KEY);
+    if (!pending) return;
+    sessionStorage.removeItem(PENDING_SHARE_KEY);
+    processShareAndOpenDetail(pending);
+  }, [loginGatePassed, processShareAndOpenDetail]);
 
   /** 탭 전환 시 sessionStorage에 저장 → 새로고침 시 해당 탭 유지 */
   useEffect(() => {
