@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * 경기 목록 동기화: 로그인 UID 기준, Firebase userGameLists/{uid}만 소스.
- * UID가 정해지면 로컬 목록 비우고 → 서버에서 받은 목록만 적용해 화면에 반영.
+ * 경기 목록 동기화: 접속한 사람(uid)과 만든 사람(createdByUid)이 같을 때만 그 경기 목록 로드 후 화면 반영.
  */
 
 import { useCallback, useEffect, useRef } from "react";
 import { createGameId, loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
 import {
+  getGameListForUid,
   getSharedGame,
   getSharedGameIdsByUid,
   getUserGameList,
@@ -145,8 +145,8 @@ export function useGameListSync(
       onListChange();
     }
 
-    // 1) 서버 목록 가져와서 적용 (구독도 같은 콜백으로 최신 유지)
-    getUserGameList(authUid).then((entries) => applyServerList(entries, authUid)).catch(() => {});
+    // 1) 만든 사람(createdByUid) 기준 포함한 목록 로드 후 적용
+    getGameListForUid(authUid).then((entries) => applyServerList(entries, authUid)).catch(() => {});
 
     // 2) "내가 만든 공유 경기" 중 목록에 없는 것만 Firebase에 추가 → 구독으로 반영
     getSharedGameIdsByUid(authUid)
@@ -175,9 +175,29 @@ export function useGameListSync(
       })
       .catch(() => {});
 
+    // 구독 시에도 접속한 사람 = 만든 사람인 항목만 적용 (getGameListForUid와 동일 규칙)
     const unsub = subscribeUserGameList(
       authUid,
-      (entries) => applyServerList(entries, authUid),
+      (entries) => {
+        getSharedGameIdsByUid(authUid)
+          .then((createdIds) => {
+            const createdSet = new Set(createdIds);
+            const mine: GameListEntry[] = entries.filter(
+              (e) => !e.shareId || createdSet.has(e.shareId)
+            );
+            const existingShareIds = new Set(
+              mine.map((e) => e.shareId).filter((s): s is string => typeof s === "string" && s.length > 0)
+            );
+            for (const shareId of createdIds) {
+              if (!existingShareIds.has(shareId)) {
+                mine.push({ id: shareId, shareId });
+                existingShareIds.add(shareId);
+              }
+            }
+            applyServerList(dedupeByShareId(mine), authUid);
+          })
+          .catch(() => applyServerList(entries, authUid));
+      },
       () => {}
     );
 
@@ -225,7 +245,7 @@ export function useGameListSync(
       onListChange();
       return;
     }
-    getUserGameList(authUid)
+    getGameListForUid(authUid)
       .then((entries) => applyServerList(entries, authUid))
       .catch(() => onListChange());
   }, [authUid, onListChange, applyServerList]);
