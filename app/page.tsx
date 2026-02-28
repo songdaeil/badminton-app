@@ -923,11 +923,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
         saveMyInfo(withUid);
         setHasUploadedProfileAfterLogin(true);
       } else {
-        setMyInfo((prev) => {
-          const next = { ...prev, uid: authUid };
-          saveMyInfo(next);
-          return next;
-        });
+        const next = { ...DEFAULT_MYINFO, uid: authUid };
+        setMyInfo(next);
+        saveMyInfo(next);
         setHasUploadedProfileAfterLogin(false);
       }
     });
