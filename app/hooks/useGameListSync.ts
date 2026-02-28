@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * 경기 목록 동기화 (한 줄 요약)
+ * - 소스: Firebase userGameLists/{uid} 단일 소스.
+ * - 계정 전환: 로컬 목록 비우기 → 서버에서 목록 가져와 적용.
+ * - 적용: 서버 항목을 로컬 id로 해석 → 로컬 저장 → 공유 경기 실시간 구독.
+ */
+
 import { useCallback, useEffect, useRef } from "react";
 import { createGameId, loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
 import {
@@ -25,7 +32,7 @@ function dedupeByShareId(entries: GameListEntry[]): GameListEntry[] {
   });
 }
 
-/** 서버 목록을 로컬 id로 해석: shareId별 로컬 id 매핑, 없으면 fetch 후 생성. 중복 id 제거. */
+/** 서버 항목 → 로컬 id 해석 (shareId면 fetch 후 매핑, 중복 제거) */
 async function resolveToLocalEntries(entries: GameListEntry[]): Promise<GameListEntry[]> {
   const deduped = dedupeByShareId(entries);
   const result: GameListEntry[] = [];
@@ -54,11 +61,6 @@ async function resolveToLocalEntries(entries: GameListEntry[]): Promise<GameList
   return result;
 }
 
-/**
- * 로그인 UID 기준 경기 목록을 Firestore와 동기화.
- * - Firebase userGameLists를 단일 소스로 적용, shareId 기준 중복 제거·로컬 id 해석
- * - 목록/공유 경기 실시간 구독으로 다른 기기 편집 즉시 반영
- */
 export function useGameListSync(
   authUid: string | null,
   onListChange: () => void
@@ -67,7 +69,9 @@ export function useGameListSync(
   refreshListFromRemote: () => void;
 } {
   const unsubSharedRef = useRef<(() => void)[]>([]);
+  const prevAuthUidRef = useRef<string | null>(null);
 
+  /** 해석된 목록을 로컬에 저장하고, 공유 경기만 실시간 구독 */
   const applyResolvedList = useCallback(
     (resolved: GameListEntry[]) => {
       const localIdsBefore = loadGameList();
@@ -96,25 +100,26 @@ export function useGameListSync(
     [onListChange]
   );
 
-  const handleServerList = useCallback(
+  /** [단일 진입점] 서버에서 받은 목록 → 해석 → 로컬 적용. 초기 로드·구독 모두 이걸로 처리 */
+  const applyServerList = useCallback(
     (entries: GameListEntry[]) => {
-      resolveToLocalEntries(entries).then(applyResolvedList).catch(() => {});
+      resolveToLocalEntries(entries)
+        .then((resolved) => {
+          if (resolved.length === 0 && authUid) setUserGameList(authUid, []).catch(() => {});
+          applyResolvedList(resolved);
+        })
+        .catch(() => {});
     },
-    [applyResolvedList]
+    [authUid, applyResolvedList]
   );
 
-  /** 현재 로컬 목록 기준으로 공유 경기(shareId) 구독만 갱신. 목록 저장은 하지 않음. 탭 포커스 시 실시간 동기화 복구용 */
+  /** 탭 포커스 시: 현재 로컬 목록의 공유 경기 구독만 다시 연결 */
   const ensureSubscriptionsForCurrentList = useCallback(() => {
     if (!isSyncAvailable()) return;
     const ids = loadGameList();
     const entries: GameListEntry[] = ids
       .map((id) => ({ id, shareId: loadGame(id)?.shareId ?? null }))
       .filter((e): e is GameListEntry & { shareId: string } => !!e.shareId);
-    if (entries.length === 0) {
-      unsubSharedRef.current.forEach((u) => u());
-      unsubSharedRef.current = [];
-      return;
-    }
     unsubSharedRef.current.forEach((u) => u());
     unsubSharedRef.current = [];
     entries.forEach((e) => {
@@ -131,23 +136,23 @@ export function useGameListSync(
   useEffect(() => {
     if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
 
-    getUserGameList(authUid)
-      .then((remote) => {
-        const deduped = dedupeByShareId(remote);
-        return resolveToLocalEntries(deduped).then((resolved) => {
-          applyResolvedList(resolved);
-          mergeUserGameList(authUid, resolved).then(() => {});
-        });
-      })
-      .catch(() => {});
+    if (prevAuthUidRef.current !== authUid) {
+      prevAuthUidRef.current = authUid;
+      saveGameList([]);
+      onListChange();
+    }
 
+    // 1) 서버 목록 한 번 가져와서 적용 (구독이 곧바로 최신으로 덮어씀)
+    getUserGameList(authUid).then(applyServerList).catch(() => {});
+
+    // 2) "내가 만든 공유 경기" 중 목록에 없는 것만 Firebase에 추가 → 구독으로 반영
     getSharedGameIdsByUid(authUid)
       .then((shareIds) => {
         getUserGameList(authUid).then((remote) => {
-          const existingShareIds = new Set(
+          const existing = new Set(
             dedupeByShareId(remote).map((e) => e.shareId).filter((s): s is string => !!s)
           );
-          const toAdd = shareIds.filter((s) => !existingShareIds.has(s));
+          const toAdd = shareIds.filter((s) => !existing.has(s));
           if (toAdd.length === 0) return;
           Promise.all(
             toAdd.map((shareId) =>
@@ -161,16 +166,13 @@ export function useGameListSync(
               saveGame(newId, { ...r.data, shareId: r.shareId });
               newEntries.push({ id: newId, shareId: r.shareId });
             });
-            if (newEntries.length === 0) return;
-            mergeUserGameList(authUid, newEntries).then((ok) => {
-              if (ok) getUserGameList(authUid).then(handleServerList).catch(() => {});
-            });
+            if (newEntries.length > 0) mergeUserGameList(authUid, newEntries).catch(() => {});
           });
         });
       })
       .catch(() => {});
 
-    const unsub = subscribeUserGameList(authUid, handleServerList, () => {});
+    const unsub = subscribeUserGameList(authUid, applyServerList, () => {});
 
     const onFocus = () => ensureSubscriptionsForCurrentList();
     if (typeof window !== "undefined") {
@@ -185,7 +187,7 @@ export function useGameListSync(
       unsubSharedRef.current.forEach((u) => u());
       unsubSharedRef.current = [];
     };
-  }, [authUid, handleServerList, applyResolvedList, ensureSubscriptionsForCurrentList]);
+  }, [authUid, applyServerList, ensureSubscriptionsForCurrentList]);
 
   const syncGameListToFirebase = useCallback(
     (opts?: { added?: string; removed?: string; removedShareId?: string }) => {
@@ -222,10 +224,8 @@ export function useGameListSync(
       onListChange();
       return;
     }
-    getUserGameList(authUid).then((entries) => {
-      resolveToLocalEntries(dedupeByShareId(entries)).then(applyResolvedList).catch(() => onListChange());
-    }).catch(() => onListChange());
-  }, [authUid, onListChange, applyResolvedList]);
+    getUserGameList(authUid).then(applyServerList).catch(() => onListChange());
+  }, [authUid, onListChange, applyServerList]);
 
   return { syncGameListToFirebase, refreshListFromRemote };
 }
