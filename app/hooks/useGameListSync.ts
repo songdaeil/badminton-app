@@ -68,6 +68,8 @@ export function useGameListSync(
 } {
   const unsubSharedRef = useRef<(() => void)[]>([]);
   const prevAuthUidRef = useRef<string | null>(null);
+  const currentAuthUidRef = useRef<string | null>(authUid);
+  currentAuthUidRef.current = authUid;
 
   /** 해석된 목록을 로컬에 저장하고, 공유 경기만 실시간 구독 */
   const applyResolvedList = useCallback(
@@ -98,17 +100,18 @@ export function useGameListSync(
     [onListChange]
   );
 
-  /** [단일 진입점] 서버에서 받은 목록 → 해석 → 로컬 적용. 초기 로드·구독 모두 이걸로 처리 */
+  /** 서버 목록 적용. forUid와 현재 로그인 UID가 같을 때만 적용 (계정 전환 후 이전 구독 콜백이 덮어쓰는 것 방지) */
   const applyServerList = useCallback(
-    (entries: GameListEntry[]) => {
+    (entries: GameListEntry[], forUid: string | null) => {
       resolveToLocalEntries(entries)
         .then((resolved) => {
-          if (resolved.length === 0 && authUid) setUserGameList(authUid, []).catch(() => {});
+          if (currentAuthUidRef.current !== forUid) return;
+          if (resolved.length === 0 && forUid) setUserGameList(forUid, []).catch(() => {});
           applyResolvedList(resolved);
         })
         .catch(() => {});
     },
-    [authUid, applyResolvedList]
+    [applyResolvedList]
   );
 
   /** 탭 포커스 시: 현재 로컬 목록의 공유 경기 구독만 다시 연결 */
@@ -143,7 +146,7 @@ export function useGameListSync(
     }
 
     // 1) 서버 목록 가져와서 적용 (구독도 같은 콜백으로 최신 유지)
-    getUserGameList(authUid).then(applyServerList).catch(() => {});
+    getUserGameList(authUid).then((entries) => applyServerList(entries, authUid)).catch(() => {});
 
     // 2) "내가 만든 공유 경기" 중 목록에 없는 것만 Firebase에 추가 → 구독으로 반영
     getSharedGameIdsByUid(authUid)
@@ -172,7 +175,11 @@ export function useGameListSync(
       })
       .catch(() => {});
 
-    const unsub = subscribeUserGameList(authUid, applyServerList, () => {});
+    const unsub = subscribeUserGameList(
+      authUid,
+      (entries) => applyServerList(entries, authUid),
+      () => {}
+    );
 
     const onFocus = () => ensureSubscriptionsForCurrentList();
     if (typeof window !== "undefined") {
@@ -218,7 +225,9 @@ export function useGameListSync(
       onListChange();
       return;
     }
-    getUserGameList(authUid).then(applyServerList).catch(() => onListChange());
+    getUserGameList(authUid)
+      .then((entries) => applyServerList(entries, authUid))
+      .catch(() => onListChange());
   }, [authUid, onListChange, applyServerList]);
 
   return { syncGameListToFirebase, refreshListFromRemote };
