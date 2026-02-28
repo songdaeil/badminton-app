@@ -134,10 +134,13 @@ export function useGameListSync(
   useEffect(() => {
     if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
 
-    // 이 UID 기준으로만 표시: 로컬 비우고 Firebase에서만 채움 (다른 계정 목록 노출 방지)
+    // UID가 바뀐 경우에만 로컬 비움 (다른 계정 목록 제거). 같은 UID면 비우지 않아 추가한 경기가 바로 화면에 남음
+    const uidChanged = prevAuthUidRef.current !== authUid;
     prevAuthUidRef.current = authUid;
-    saveGameList([]);
-    onListChange();
+    if (uidChanged) {
+      saveGameList([]);
+      onListChange();
+    }
 
     // 1) 서버 목록 가져와서 적용 (구독도 같은 콜백으로 최신 유지)
     getUserGameList(authUid).then(applyServerList).catch(() => {});
