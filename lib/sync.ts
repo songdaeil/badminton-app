@@ -195,23 +195,13 @@ export async function getUserGameList(uid: string): Promise<GameListEntry[]> {
   }
 }
 
-/** 접속한 사람(uid)과 만든 사람(createdByUid)이 같을 때만: 그 경기 목록만 반환 */
+/** 해당 uid의 경기 목록(만든 경기 + 참여한 경기) 반환 */
 export async function getGameListForUid(uid: string): Promise<GameListEntry[]> {
   const [list, createdShareIds] = await Promise.all([
     getUserGameList(uid),
     getSharedGameIdsByUid(uid),
   ]);
-  const createdSet = new Set(createdShareIds);
-  // userGameLists 중 shareId가 있는 건 → createdByUid가 나인 것만 (createdSet에 있는 것만)
-  // shareId가 없으면 로컬 전용 → 내 목록에 있으면 내가 만든 것으로 간주
-  const mine: GameListEntry[] = [];
-  for (const e of list) {
-    if (e.shareId) {
-      if (createdSet.has(e.shareId)) mine.push(e);
-    } else {
-      mine.push(e);
-    }
-  }
+  const mine: GameListEntry[] = [...list];
   // createdByUid로 찾은 공유 경기 중 목록에 없는 것 추가
   const existingShareIds = new Set(mine.map((e) => e.shareId).filter((s): s is string => typeof s === "string" && s.length > 0));
   for (const shareId of createdShareIds) {

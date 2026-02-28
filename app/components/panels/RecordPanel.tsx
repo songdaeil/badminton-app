@@ -97,6 +97,8 @@ export function RecordPanel() {
                     : "";
                   const creatorName = data.createdBy ? data.members.find((m) => m.id === data.createdBy)?.name : null;
                   const creatorDisplay = creatorName ?? data.createdByName ?? "알 수 없음";
+                  const currentUid = myInfo?.uid ?? getCurrentUserUid() ?? null;
+                  const isCreatedByMe = !data.createdByUid || data.createdByUid === currentUid;
                   const hasMatches = data.matches.length > 0;
                   const completedCount = data.matches.filter((m) => m.score1 != null && m.score2 != null).length;
                   const matchIdSet = new Set(data.matches.map((m) => String(m.id)));
@@ -166,6 +168,13 @@ export function RecordPanel() {
                         }}
                         className="w-full text-left px-2.5 py-1.5 pr-8 rounded-lg bg-white border border-[#e8e8ed] shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:bg-slate-50 transition-colors btn-tap"
                       >
+                        <span
+                          className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-full mb-1 ${
+                            isCreatedByMe ? "bg-emerald-100 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}
+                        >
+                          {isCreatedByMe ? "내가 만든 경기" : "참여한 경기"}
+                        </span>
                         <p
                           className="font-semibold text-slate-800 truncate text-sm leading-tight font-numeric min-h-[1.25rem]"
                           title={titleLabel}

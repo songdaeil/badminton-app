@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * 경기 목록 동기화: 접속한 사람(uid)과 만든 사람(createdByUid)이 같을 때만 그 경기 목록 로드 후 화면 반영.
+ * 경기 목록 동기화: 해당 uid의 경기 목록(만든 경기 + 참여한 경기)을 로드·구독 후 화면에 반영.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -175,16 +175,13 @@ export function useGameListSync(
       })
       .catch(() => {});
 
-    // 구독 시에도 접속한 사람 = 만든 사람인 항목만 적용 (getGameListForUid와 동일 규칙)
+    // 구독 시에도 목록 전체(만든 경기 + 참여한 경기) 적용 (getGameListForUid와 동일 규칙)
     const unsub = subscribeUserGameList(
       authUid,
       (entries) => {
         getSharedGameIdsByUid(authUid)
           .then((createdIds) => {
-            const createdSet = new Set(createdIds);
-            const mine: GameListEntry[] = entries.filter(
-              (e) => !e.shareId || createdSet.has(e.shareId)
-            );
+            const mine: GameListEntry[] = [...entries];
             const existingShareIds = new Set(
               mine.map((e) => e.shareId).filter((s): s is string => typeof s === "string" && s.length > 0)
             );
