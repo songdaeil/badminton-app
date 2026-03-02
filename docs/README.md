@@ -37,6 +37,122 @@ Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [
 
 배드민턴 경기 관리 앱의 디렉터리·역할 정리.
 
+### 2.1 탐색기 항목별 최하위 경로 및 역할
+
+왼쪽 탐색기(Explorer)에 보이는 항목별로, 최하위 경로/문서와 그 역할을 정리한 표입니다.
+
+| 탐색기 항목 | 최하위 경로 / 문서 | 역할 (상세 설명) |
+|-------------|--------------------|------------------|
+| **.next** | (빌드 생성 디렉터리 전체) | `next build` / `next dev` 시 생성되는 출력·캐시. 최적화된 JS/CSS 번들, SSR 결과, 라우트 매니페스트 등이 들어 있으며, Git 추적 대상이 아님. |
+| **app** | (App Router 루트) | Next.js App Router의 핵심 디렉터리. 라우트(페이지), 레이아웃, 공통/클라이언트 컴포넌트 등 대부분의 앱 소스가 위치함. |
+| **app/components** | (공통 UI 컴포넌트들) | 앱 전역에서 재사용하는 UI 컴포넌트(버튼, 폼, 아이콘, PWA 설치 유도 등)를 모아둔 폴더. |
+| **app/components/AddMemberForm.tsx** | `app/components/AddMemberForm.tsx` | 명단 추가용 폼 컴포넌트. 이름·등급 입력 및 추가 버튼. |
+| **app/components/PwaInstallPrompt.tsx** | `app/components/PwaInstallPrompt.tsx` | PWA 설치 유도 배너·모달. “홈 화면에 추가” 버튼, Chrome 설치 프롬프트 연동, iOS/수동 설치 안내. |
+| **app/components/category-icons.tsx** | `app/components/category-icons.tsx` | 경기 방식 카테고리(복식·단식·대항전·단체 등) 아이콘 컴포넌트. |
+| **app/components/nav-icons.tsx** | `app/components/nav-icons.tsx` | 하단 탭(경기 방식·경기 목록·경기 이사) 아이콘 컴포넌트. |
+| **app/game** | (경기 라우트 폴더) | 경기(게임) 상세 라우트를 위한 디렉터리. |
+| **app/game/[id]/page.tsx** | `app/game/[id]/page.tsx` | 동적 경기 상세 페이지. `/game/[id]` 진입 시 해당 경기 데이터로 GameView 렌더. |
+| **app/hooks** | (훅 폴더) | 재사용 가능한 커스텀 React 훅 정의. |
+| **app/hooks/useGameListSync.ts** | `app/hooks/useGameListSync.ts` | 로그인 UID 기준 경기 목록 Firestore 동기화. 구독·병합·업로드 로직 캡슐화. |
+| **app/icons** | (아이콘 라우트 폴더) | 아이콘 관련 라우트·페이지. |
+| **app/icons/page.tsx** | `app/icons/page.tsx` | 아이콘 목록/테스트용 페이지. |
+| **app/login** | (로그인 라우트 폴더) | 로그인·회원가입 전용 라우트. |
+| **app/login/page.tsx** | `app/login/page.tsx` | 로그인 전용 페이지. 현재는 `/`로 리다이렉트하며, 실제 로그인 UI는 메인 “나의 정보”에 있음. |
+| **app/constants.ts** | `app/constants.ts` | 앱 전역 상수. PRIMARY, PRIMARY_LIGHT, LOGIN_GATE_KEY, NAV_ORDER, NavView 타입 등. |
+| **app/favicon.ico** | `app/favicon.ico` | 웹사이트 파비콘. 브라우저 탭·북마크에 표시되는 아이콘. |
+| **app/globals.css** | `app/globals.css` | 전역 CSS. Tailwind 기반 스타일, 유틸 클래스, 키프레임(애니메이션) 등. |
+| **app/layout.tsx** | `app/layout.tsx` | 루트 레이아웃. HTML/body, 메타 태그, PWA 관련 메타, 폰트, PwaInstallPrompt 등 모든 페이지 공통 UI. |
+| **app/manifest.ts** | `app/manifest.ts` | PWA 웹 매니페스트. 앱 이름·아이콘·시작 URL·display(standalone) 등 설치형 앱 설정. |
+| **app/page.tsx** | `app/page.tsx` | 메인 페이지. Home → GameView 한 컴포넌트에 경기 세팅·목록·나의 정보 탭 및 상세 UI·상태·로직이 집중됨. |
+| **app/types.ts** | `app/types.ts` | 앱 내 공통 타입. Member, Match, Team, GameMode, Grade 등. |
+| **docs** | (문서 폴더) | 프로젝트 문서 전용 폴더. |
+| **docs/README.md** | `docs/README.md` | 통합 문서. 프로젝트 구조, Firebase 설정, 경기 목록 동기화, 사용자 시나리오·개선 제안 등 전체 설명. |
+| **lib** | (라이브러리 루트) | app과 분리된 공통 유틸·서비스·비즈니스 로직. |
+| **lib/firebase.ts** | `lib/firebase.ts` | Firebase 앱·Auth·Firestore 초기화, getDb, getAuthInstance, ensureFirebase 등. |
+| **lib/game-logic.ts** | `lib/game-logic.ts` | 경기 방식 설정(GAME_MODES, TARGET_TOTAL_GAMES_TABLE, GRADE_ORDER), 대진 생성(buildRoundRobinMatches, generateMatchesByGameMode, getTargetTotalGames). |
+| **lib/game-mode-utils.ts** | `lib/game-mode-utils.ts` | 시간/코트/포맷 유틸(TIME_OPTIONS_30MIN, createId, formatSavedAt, formatEstimatedDuration, canUseParallelCourts 등), game-logic 일부 re-export. |
+| **lib/game-share.ts** | `lib/game-share.ts` | 공유 링크용 직렬화·복원(encodeGameForShare, decodeGameFromShare). |
+| **lib/game-storage.ts** | `lib/game-storage.ts` | 로컬 저장. loadGame, saveGame, loadGameList, saveGameList, addGameToList, removeGameFromList, loadMyInfo, saveMyInfo. |
+| **lib/match-stats.ts** | `lib/match-stats.ts` | 승패·득실차 계산(recomputeMemberStatsFromMatches, buildRankingFromMatchesOnly). |
+| **lib/sync.ts** | `lib/sync.ts` | Firestore 공유. sharedGames·userGameLists: getSharedGame, setSharedGame, subscribeSharedGame, getUserGameList, setUserGameList, subscribeUserGameList. |
+| **lib/profile-sync.ts** | `lib/profile-sync.ts` | 로그인 UID 기준 프로필 원격 조회·저장(getRemoteProfile, setRemoteProfile). |
+| **lib/email-auth.ts** | `lib/email-auth.ts` | 이메일 로그인·회원가입·인증(signIn, signUp, sendVerification, subscribeEmailAuthState 등). |
+| **lib/phone-auth.ts** | `lib/phone-auth.ts` | 전화번호 로그인(startPhoneAuth, confirmPhoneCode, getCurrentPhoneUser 등). |
+| **node_modules** | (패키지 디렉터리) | `npm install`로 설치된 외부 패키지. Git 추적 대상 아님. |
+| **public** | (정적 파일 루트) | 빌드 없이 그대로 서비스되는 정적 파일(이미지, HTML, 검증 파일 등). |
+| **public/file.svg** | `public/file.svg` | 정적 SVG 아이콘/이미지. |
+| **public/privacy.html** | `public/privacy.html` | 개인정보 처리 방침 등 정적 HTML. |
+| **public/vercel.svg** | `public/vercel.svg` | Vercel 관련 정적 이미지. |
+| **public/window.svg** | `public/window.svg` | 윈도우/앱 관련 정적 SVG. |
+| **public/google265835da0424a401.html** | `public/google265835da0424a401.html` | Google 검색/소유권 검증용 HTML. |
+| **.editorconfig** | `.editorconfig` | 에디터 공통 설정. 들여쓰기, 인코딩, 줄 끝 등으로 팀 코딩 스타일 통일. |
+| **.env.example** | `.env.example` | 환경 변수 예시. `.env.local` 복사 시 참고하는 Firebase 등 설정 템플릿. |
+| **.env.local** | `.env.local` | 로컬 환경 변수(Firebase API 키 등). Git 제외, 실제 값 보관. |
+| **.gitignore** | `.gitignore` | Git이 무시할 파일·폴더(.next, node_modules, .env.local 등). |
+| **eslint.config.mjs** | `eslint.config.mjs` | ESLint 규칙·설정. 코드 품질·스타일 검사. |
+| **firestore.rules.example** | `firestore.rules.example` | Firestore 보안 규칙 예시. sharedGames, users, userGameLists 등 접근 제어 참고용. |
+| **next-env.d.ts** | `next-env.d.ts` | Next.js 관련 TypeScript 전역 타입 선언. |
+| **next.config.ts** | `next.config.ts` | Next.js 설정. 빌드, 이미지, 환경 변수, 라우팅 등. |
+| **package-lock.json** | `package-lock.json` | 의존성 잠금. npm 설치 시 동일 버전 보장. |
+| **package.json** | `package.json` | 프로젝트 메타·스크립트(dev, build 등)·직접 의존성 목록. |
+| **postcss.config.mjs** | `postcss.config.mjs` | PostCSS 설정. Tailwind 등 CSS 변환 플러그인. |
+| **README.md** | `README.md` | 루트 README. 프로젝트 소개·실행 방법·docs/README.md 링크. |
+| **tsconfig.json** | `tsconfig.json` | TypeScript 컴파일 설정. 대상, 모듈, 경로 별칭(@/ 등). |
+
+### 2.2 폴더·항목별 사용 여부·중복 검토 및 정리 방향
+
+아래 표는 각 폴더·파일의 **실제 사용 여부**, **중복 여부**를 검토한 뒤, **정리 방향**을 제안한 것입니다.
+
+| 구분 | 경로/항목 | 사용 유무 | 중복 유무 | 비고 |
+|------|-----------|-----------|-----------|------|
+| **빌드/캐시** | `.next` | 사용(자동 생성) | — | Git 제외, 유지. |
+| **앱 루트** | `app` | 사용 | — | 핵심 소스. |
+| **app** | `app/components/AddMemberForm.tsx` | 사용 | — | `page.tsx`에서 import하여 사용. |
+| **app** | `app/components/PwaInstallPrompt.tsx` | 사용 | — | `layout.tsx`에서 사용. |
+| **app** | `app/components/category-icons.tsx` | 사용 | — | `page.tsx`에서 카테고리 아이콘으로 사용. |
+| **app** | `app/components/nav-icons.tsx` | 사용 | — | `page.tsx`에서 하단 탭 아이콘으로 사용. |
+| **app** | `app/game/[id]/page.tsx` | 사용 | — | `/game/[id]` 라우트, `GameView`만 사용. |
+| **app** | `app/hooks/useGameListSync.ts` | 사용 | — | `page.tsx`에서 경기 목록 Firestore 동기화에 사용. |
+| **app** | `app/icons/page.tsx` | **간접 사용** | — | `/icons` 라우트만 존재. 앱 내 링크는 없음. 개발/디자인용 미리보기 페이지. |
+| **app** | `app/login/page.tsx` | 사용 | — | `/login` 진입 시 `/`로 리다이렉트. 실제 로그인 UI는 메인에 있음. |
+| **app** | `app/constants.ts`, `types.ts`, `layout.tsx`, `page.tsx`, `manifest.ts`, `globals.css`, `favicon.ico` | 사용 | — | 유지. |
+| **문서** | `docs`, `docs/README.md` | 사용 | — | 통합 문서. 유지. |
+| **lib** | `lib/firebase.ts`, `game-storage.ts`, `sync.ts`, `game-share.ts`, `match-stats.ts`, `game-logic.ts`, `game-mode-utils.ts`, `profile-sync.ts`, `email-auth.ts`, `phone-auth.ts` | 사용 | — | 핵심 로직. `page.tsx`는 여기서 import하여 사용. |
+| **기타** | `node_modules`, `public/*` | 사용 또는 정적 자산 | — | 유지. |
+| **설정** | 루트 설정 파일들 | 사용 | — | 유지. |
+
+**정리 적용 이력 (누적)**  
+전혀 사용되지 않는 항목만 삭제 후 `npm run build`로 검증함.  
+삭제: `lib/inquiry.ts`, `app/components/profile-badge.tsx`, `app/components/panels/*`, AppNav, GameViewHeader, HelpModals, RegenerateConfirmModal, ShareToast, `app/contexts/GameViewContext.tsx`, 빈 폴더 `app/contexts`, `app/auth`, `src`, `utils`.
+
+**정리 방향 제안 (참고용)**
+
+1. **미사용·빈 폴더**
+   - **app/auth**: 인증을 별도 라우트로 분리할 계획이 있으면 유지, 없으면 폴더 삭제 또는 `README`에 “예약” 표기.
+   - **src**, **utils**: 사용처가 없으면 삭제하여 구조 단순화.
+
+2. **미사용 컴포넌트(패널·Context·모달·토스트·프로필 뱃지)**
+   - **옵션 A (활용)**: `page.tsx`를 리팩터링하여 `GameViewProvider`로 감싼 뒤, `SettingPanel`, `RecordPanel`, `MyInfoPanel`, `AppNav`, `GameViewHeader`, `HelpModals`, `RegenerateConfirmModal`, `ShareToast`를 실제로 import해 사용. 중복 인라인 UI 제거 → 단일 소스로 유지보수.
+   - **옵션 B (제거)**: 위 컴포넌트·Context를 사용할 계획이 없으면 삭제하고, `page.tsx`만 유지. 문서에서 “미사용”으로 명시.
+
+3. **profile-badge.tsx**
+   - 나의 정보 등에서 프로필 뱃지 UI를 쓸 계획이 있으면 해당 위치에 import해 사용, 없으면 삭제.
+
+4. **lib/inquiry.ts**
+   - 문의하기 기능을 넣을 계획이 있으면 Firestore 규칙에 `inquiries` 컬렉션 추가 후, 문의 폼 UI에서 `submitInquiry` 호출. 계획 없으면 삭제하거나 “예약 모듈”로 문서화.
+
+5. **app/icons/page.tsx**
+   - 개발용 아이콘 미리보기로만 쓰면 유지. 배포 시 불필요하면 라우트 제거 또는 개발 전용으로 한정.
+
+6. **GAME_CATEGORIES 등 상수**
+   - `page.tsx` 내부의 `GAME_CATEGORIES`와 Context/패널에서 기대하는 값이 동일 개념이므로, 정리 시 `app/constants.ts` 또는 `lib/game-logic.ts` 쪽으로 한 곳에 두고 재사용하면 중복 제거에 도움됨.
+
+**적용 완료**: 위 미사용 항목 삭제 후 `npm run build`로 검증함.
+
+- **(참고) 삭제하지 않음**: 미사용 컴포넌트(패널·AppNav·GameViewHeader·HelpModals·RegenerateConfirmModal·ShareToast·profile-badge), `GameViewContext`, `lib/inquiry.ts`, 빈 폴더(`app/auth`, `src`, `utils`)는 삭제 후 적용 완료.
+- **문서화만 적용**: 위 표와 정리 방향 제안으로 “무엇이 미사용·중복인지”만 명시. 코드 삭제나 대규모 리팩터는 진행하지 않음.
+- **빈 폴더**: 필요 시 해당 폴더에 용도만 적어 두어 “예약” 상태로 유지 (예: `app/auth` = 인증 전용 라우트 예약).
+
 ### 앱 진입점
 
 - **app/page.tsx** – 메인 페이지. `Home` → `GameView` 한 컴포넌트에 경기 세팅·목록·나의 정보 탭과 상세 UI가 모두 포함됨. (파일이 크므로 수정 시 부담을 줄이려면 이후 컴포넌트/훅 분리 권장)
@@ -81,6 +197,12 @@ Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [
 ### 데이터 흐름 요약
 
 - **경기 데이터**: 로컬(game-storage) + 공유 시 Firestore(sync). 경기 상세는 subscribeSharedGame으로 실시간 반영.
+
+**코드·데이터 규칙**
+
+- **스토리지 키**: 모두 `badminton_*`(언더스코어)로 통일. `app/constants.ts`(LOGIN_GATE_KEY, PENDING_SHARE_KEY, PROFILE_UPLOADED_KEY 등), `lib/game-storage.ts`(badminton_local, badminton_myinfo, badminton_game_list), `app/components/PwaInstallPrompt.tsx`(badminton_pwa_prompt_dismissed). 기존 하이픈 키(badminton-game-list 등)는 로드 시 1회 마이그레이션으로 새 키로 복사 후 삭제.
+- **상수**: `app/constants.ts`에서만 정의하고, 페이지·컴포넌트는 import만 사용.
+- **공유 경기·페이로드·프로필**: Firestore 업로드는 `lib/sync.ts`의 `uploadSharedGameIfNeeded`, `shouldSkipSharedGameUpload` 사용. GameData 페이로드 생성은 `lib/game-storage.ts`의 `buildGameDataPayload`. 멤버에 내 프로필 반영은 `lib/match-stats.ts`의 `applyMyProfileToMembers` 사용.
 - **경기 목록**: 로컬 목록 + 로그인 시 userGameLists와 동기화(useGameListSync). 추가/삭제 시 원격과 병합 후 업로드.
 - **프로필**: 로컬(myInfo) + 로그인 UID 기준 Firestore(profile-sync).
 
@@ -243,7 +365,7 @@ npm run dev
 ### 결론: 최종 소스는 Firebase, 화면은 localStorage를 읽음
 
 - **진짜 데이터 원천**: Firebase Firestore `userGameLists/{uid}` 문서 (해당 UID의 경기 목록).
-- **화면이 읽는 곳**: **localStorage** 키 `badminton-game-list`. 이 값은 동기화 훅이 Firebase에서 가져와 덮어쓴 결과입니다.
+- **화면이 읽는 곳**: **localStorage** 키 `badminton_game_list`. 이 값은 동기화 훅이 Firebase에서 가져와 덮어쓴 결과입니다.
 
 즉, "올라오는 내용"은 **Firebase가 원본**이고, 앱은 그걸 로컬에 저장한 뒤 그 로컬을 UI 소스로 씁니다.
 
@@ -257,7 +379,7 @@ sequenceDiagram
   participant Firebase
 
   Note over UI,Firebase: 새로고침 직후
-  UI->>localStorage: loadGameList() (badminton-game-list)
+  UI->>localStorage: loadGameList() (badminton_game_list)
   localStorage-->>UI: 이전 세션 캐시 (같은 UID면 그대로 표시)
   useGameListSync->>Firebase: getUserGameList(authUid)
   Firebase-->>useGameListSync: userGameLists/{uid} 문서의 list
@@ -279,7 +401,7 @@ sequenceDiagram
 
 | 역할 | 파일 | 설명 |
 |------|------|------|
-| 경기 목록 ID 배열 저장/로드 | lib/game-storage.ts | `loadGameList()` / `saveGameList()` — localStorage `badminton-game-list` |
+| 경기 목록 ID 배열 저장/로드 | lib/game-storage.ts | `loadGameList()` / `saveGameList()` — localStorage `badminton_game_list` |
 | Firestore 경기 목록 조회/구독 | lib/sync.ts | `getUserGameList(uid)`, `subscribeUserGameList(uid)` — 컬렉션 `userGameLists`, 문서 id = uid |
 | 동기화 훅 (소스 적용) | app/hooks/useGameListSync.ts | `getUserGameList(authUid).then(applyServerList)` → `saveGameList` + `onListChange` |
 | 화면 표시 | app/page.tsx | `loadGameList()`로 id 배열 읽고, 각 id로 `loadGame(id)` 해서 카드 렌더 |

@@ -2,11 +2,11 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { addGameToList, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
+import { addGameToList, buildGameDataPayload, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
 import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
 import { getCurrentUserUid, getRemoteProfile, setRemoteProfile } from "@/lib/profile-sync";
-import { addSharedGame, deleteSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, subscribeSharedGame } from "@/lib/sync";
+import { addSharedGame, deleteSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, shouldSkipSharedGameUpload, subscribeSharedGame, uploadSharedGameIfNeeded } from "@/lib/sync";
 import {
   getCurrentEmailUser,
   isEmailAuthAvailable,
@@ -30,7 +30,7 @@ import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUse
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
 import { useGameListSync } from "@/app/hooks/useGameListSync";
 import { decodeGameFromShare, encodeGameForShare } from "@/lib/game-share";
-import { buildRankingFromMatchesOnly, recomputeMemberStatsFromMatches } from "@/lib/match-stats";
+import { applyMyProfileToMembers, buildRankingFromMatchesOnly, recomputeMemberStatsFromMatches } from "@/lib/match-stats";
 import {
   createId,
   formatEstimatedDuration,
@@ -43,7 +43,7 @@ import {
   MINUTES_PER_21PT_GAME,
   TIME_OPTIONS_30MIN,
 } from "@/lib/game-mode-utils";
-import { PRIMARY, PRIMARY_LIGHT } from "@/app/constants";
+import { LOGIN_GATE_KEY, NAV_ORDER, PRIMARY, PRIMARY_LIGHT, PENDING_SHARE_KEY, PROFILE_UPLOADED_KEY } from "@/app/constants";
 import { AddMemberForm } from "@/app/components/AddMemberForm";
 
 /** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
@@ -80,13 +80,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 로그인 후 프로필 업로드 완료 여부 (true: 원격 로드됨 또는 업로드 성공. 이전에만 경기 방식·경기 목록 이용 가능) */
   const [hasUploadedProfileAfterLogin, _setHasUploadedProfile] = useState(() => {
     if (typeof window === "undefined") return false;
-    return localStorage.getItem("badminton_profile_uploaded") === "1";
+    return localStorage.getItem(PROFILE_UPLOADED_KEY) === "1";
   });
   const setHasUploadedProfileAfterLogin = useCallback((v: boolean) => {
     _setHasUploadedProfile(v);
     if (typeof window !== "undefined") {
-      if (v) localStorage.setItem("badminton_profile_uploaded", "1");
-      else localStorage.removeItem("badminton_profile_uploaded");
+      if (v) localStorage.setItem(PROFILE_UPLOADED_KEY, "1");
+      else localStorage.removeItem(PROFILE_UPLOADED_KEY);
     }
   }, []);
   /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
@@ -226,7 +226,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           const remoteSaved = (remote.matches ?? []).filter((m) => m.score1 != null || m.score2 != null).length;
           if (localSaved > remoteSaved) {
             saveGame(id, { ...data, shareId: data.shareId });
-            setSharedGame(data.shareId, { ...data, shareId: data.shareId }).catch(() => {});
+            uploadSharedGameIfNeeded({ ...data, shareId: data.shareId }).catch(() => {});
           } else {
             saveGame(id, { ...remote, shareId: data.shareId });
             data = { ...remote, shareId: data.shareId };
@@ -292,9 +292,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       }
       const data = loadGame(leavingId);
       saveGame(leavingId, data);
-      if (data.shareId && isSyncAvailable()) {
-        setSharedGame(data.shareId, data).catch(() => {});
-      }
+      uploadSharedGameIfNeeded(data).catch(() => {});
     };
   }, [effectiveGameId]);
 
@@ -442,8 +440,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
     [router, syncGameListToFirebase]
   );
 
-  const PENDING_SHARE_KEY = "badminton_pending_share";
-
   /** 공유 링크(?share=...) 진입: 로그인 안 됐으면 share만 보관 후 로그인 유도. 로그인됐으면 경기 로드 후 상세 진입 */
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -493,8 +489,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setSelectedGameId(null);
     router.replace("/", { scroll: false });
   }, [gameId, searchParams, router]);
-
-  const LOGIN_GATE_KEY = "badminton_login_passed";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -563,7 +557,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 업로드까지 했고, 현재 프로필에 필수 항목이 모두 있으면 완성 (아이콘 채움·경기 방식/목록 이용 가능) */
   const isProfileComplete = hasUploadedProfileAfterLogin && hasRequiredProfileFields();
 
-  const NAV_ORDER: ("setting" | "record" | "myinfo")[] = ["setting", "record", "myinfo"];
   const navIndex = NAV_ORDER.indexOf(navView);
 
   /** 경기 목록 상세·프로필 수정 열림 시 캐러셀 스와이프 무시용 ref 동기화 */
@@ -699,54 +692,28 @@ export function GameView({ gameId }: { gameId: string | null }) {
   useEffect(() => {
     if (!mounted || effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave =
-      myProfileMemberId != null
-        ? members.map((m) =>
-            m.id === myProfileMemberId
-              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
-              : m
-          )
-        : members;
-    const payload: GameData = {
+    const membersToSave = applyMyProfileToMembers(members, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
       gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: myProfileMemberId ?? undefined,
-      createdAt: existing.createdAt ?? undefined,
-      createdBy: existing.createdBy ?? undefined,
-      createdByName: existing.createdByName ?? undefined,
-      createdByUid: existing.createdByUid ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
-      importedFromShare: existing.importedFromShare ?? undefined,
-      shareId: existing.shareId ?? undefined,
-    };
-    /** 공유 경기인데 state는 아직 비어 있고 로컬에는 데이터가 있음 → 진입 직후. 빈 payload로 Firebase 쓰면 서버 초기화 후 다른 기기로 퍼져 데이터 유실되므로 이번 run에서는 저장/업로드 스킵 */
-    const isSharedButStateNotLoaded =
-      existing.shareId &&
-      members.length === 0 &&
-      matches.length === 0 &&
-      ((existing.members?.length ?? 0) > 0 || (existing.matches?.length ?? 0) > 0);
-    if (isSharedButStateNotLoaded) return;
+    });
+    if (shouldSkipSharedGameUpload(payload, existing)) return;
     /** 로컬 저장 후, 공유 경기(shareId)면 Firestore 업로드. 빈 payload로 로컬/서버 덮어쓰기 방지(데이터 유실 방지). */
     const runSave = (id: string, data: GameData) => {
       const localBefore = loadGame(id);
-      const wouldOverwriteWithEmpty =
-        data.shareId &&
-        (data.members?.length ?? 0) === 0 &&
-        (data.matches?.length ?? 0) === 0 &&
-        ((localBefore.members?.length ?? 0) > 0 || (localBefore.matches?.length ?? 0) > 0);
-      if (wouldOverwriteWithEmpty) return;
+      if (shouldSkipSharedGameUpload(data, localBefore)) return;
       saveGame(id, data);
-      if (data.shareId && isSyncAvailable()) {
-        if (skipNextFirestorePush.current) {
-          skipNextFirestorePush.current = false;
-        } else {
-          setSharedGame(data.shareId, data)
-            .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
-            .catch(() => {});
-        }
+      if (!skipNextFirestorePush.current) {
+        uploadSharedGameIfNeeded(data)
+          .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
+          .catch(() => {});
+      } else {
+        skipNextFirestorePush.current = false;
       }
     };
     saveDebounceRef.current = { id: effectiveGameId, payload };
@@ -850,19 +817,20 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const existing = loadGame(gameId);
     const newId = createGameId();
     const creatorUid = myInfo.uid ?? getCurrentUserUid();
-    const payload: GameData = {
+    const payload = buildGameDataPayload(existing, {
       members: existing.members ?? [],
       matches: [],
       gameName: existing.gameName ?? undefined,
       gameMode: existing.gameMode,
       gameSettings: existing.gameSettings ?? { ...DEFAULT_GAME_SETTINGS },
-      myProfileMemberId: existing.myProfileMemberId ?? undefined,
+      myProfileMemberId: undefined,
+      playingMatchIds: [],
+      shareId: undefined,
       createdAt: new Date().toISOString(),
       createdBy: null,
       createdByName: myInfo.name || "-",
       createdByUid: creatorUid ?? null,
-      playingMatchIds: [],
-    };
+    });
     saveGame(newId, payload);
     addGameToList(newId);
     if (creatorUid && isSyncAvailable()) {
@@ -892,7 +860,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (db) {
       if (data.shareId) {
         const payload = { ...data, shareId: data.shareId };
-        const ok = await setSharedGame(data.shareId, payload);
+        const ok = (await uploadSharedGameIfNeeded(payload)) === true;
         shareParam = ok ? data.shareId : encodeGameForShare(data);
         if (ok) {
           saveGame(targetGameId, payload);
@@ -955,14 +923,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       inputs[m.id] = { s1: "", s2: "" };
     }
     const membersReset = members.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }));
-    const membersToSave =
-      myProfileMemberId != null
-        ? membersReset.map((m) =>
-            m.id === myProfileMemberId
-              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
-              : m
-          )
-        : membersReset;
+    const membersToSave = applyMyProfileToMembers(membersReset, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
     setMatches(newMatches);
     setScoreInputs(inputs);
     setSelectedPlayingMatchIds([]);
@@ -973,27 +934,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
     matchGenerateDoneAtRef.current = Date.now();
 
     const existing = loadGame(effectiveGameId);
-    const payload: GameData = {
+    const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches: newMatches,
       gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: myProfileMemberId ?? undefined,
-      createdAt: existing.createdAt ?? undefined,
-      createdBy: existing.createdBy ?? undefined,
-      createdByName: existing.createdByName ?? undefined,
-      createdByUid: existing.createdByUid ?? undefined,
       playingMatchIds: [],
-      importedFromShare: existing.importedFromShare ?? undefined,
-      shareId: existing.shareId ?? undefined,
-    };
+    });
     saveGame(effectiveGameId, payload);
-    if (payload.shareId && isSyncAvailable()) {
-      setSharedGame(payload.shareId, payload)
-        .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
-        .catch(() => {});
-    }
+    uploadSharedGameIfNeeded(payload)
+      .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
+      .catch(() => {});
   }, [effectiveGameId, gameModeId, gameName, gameSettings, members, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade]);
 
   const scoreLimit = Math.max(1, gameSettings.scoreLimit || 21);
@@ -1036,38 +989,26 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setSelectedPlayingMatchIds((prev) => prev.filter((id) => id !== matchId));
       setScoreInputs((prev) => ({ ...prev, [matchId]: { s1: String(s1), s2: String(s2) } }));
 
-      const membersToSave =
-        myProfileMemberId != null
-          ? nextMembers.map((m) =>
-              m.id === myProfileMemberId
-                ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
-                : m
-            )
-          : nextMembers;
-      const payload: GameData = {
-        ...existing,
+      const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+      const payload = buildGameDataPayload(existing, {
         members: membersToSave,
         matches: nextMatches,
-        gameName: existing.gameName ?? (gameName && gameName.trim() ? gameName.trim() : undefined),
-        gameMode: existing.gameMode ?? gameModeId,
-        gameSettings: existing.gameSettings ?? gameSettings,
-        myProfileMemberId: existing.myProfileMemberId ?? myProfileMemberId ?? undefined,
+        gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
+        gameMode: gameModeId,
+        gameSettings,
+        myProfileMemberId: myProfileMemberId ?? undefined,
         playingMatchIds: (existing.playingMatchIds ?? selectedPlayingMatchIds).filter((id) => id !== matchId),
-      };
+      });
       saveGame(effectiveGameId, payload);
-      if (payload.shareId && isSyncAvailable()) {
-        if (saveResultFirestoreTimerRef.current) clearTimeout(saveResultFirestoreTimerRef.current);
-        const gameIdToUpload = effectiveGameId;
-        saveResultFirestoreTimerRef.current = setTimeout(() => {
-          saveResultFirestoreTimerRef.current = null;
-          const data = loadGame(gameIdToUpload);
-          if (data.shareId && isSyncAvailable()) {
-            setSharedGame(data.shareId, data)
-              .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
-              .catch(() => {});
-          }
-        }, SAVE_RESULT_FIRESTORE_DEBOUNCE_MS);
-      }
+      if (saveResultFirestoreTimerRef.current) clearTimeout(saveResultFirestoreTimerRef.current);
+      const gameIdToUpload = effectiveGameId;
+      saveResultFirestoreTimerRef.current = setTimeout(() => {
+        saveResultFirestoreTimerRef.current = null;
+        const data = loadGame(gameIdToUpload);
+        uploadSharedGameIfNeeded(data)
+          .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
+          .catch(() => {});
+      }, SAVE_RESULT_FIRESTORE_DEBOUNCE_MS);
     },
     [matches, scoreInputs, scoreLimit, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, effectiveGameId, gameName, gameModeId, gameSettings, members, selectedPlayingMatchIds]
   );
@@ -1092,29 +1033,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setRosterChangedSinceGenerate(true);
     if (effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave =
-      myProfileMemberId != null
-        ? nextMembers.map((m) =>
-            m.id === myProfileMemberId
-              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
-              : m
-          )
-        : nextMembers;
-    const payload: GameData = {
+    const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
       gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: myProfileMemberId ?? undefined,
-      createdAt: existing.createdAt ?? undefined,
-      createdBy: existing.createdBy ?? undefined,
-      createdByName: existing.createdByName ?? undefined,
-      createdByUid: existing.createdByUid ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
-      importedFromShare: existing.importedFromShare ?? undefined,
-      shareId: existing.shareId ?? undefined,
-    };
+    });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
   }, [gameModeId, members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
@@ -1135,24 +1063,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setRosterChangedSinceGenerate(true);
     if (effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave = nextMembers.map((m) =>
-      m.id === newId ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" } : m
-    );
-    const payload: GameData = {
+    const membersToSave = applyMyProfileToMembers(nextMembers, newId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
       gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: newId,
-      createdAt: existing.createdAt ?? undefined,
-      createdBy: existing.createdBy ?? undefined,
-      createdByName: existing.createdByName ?? undefined,
-      createdByUid: existing.createdByUid ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
-      importedFromShare: existing.importedFromShare ?? undefined,
-      shareId: existing.shareId ?? undefined,
-    };
+    });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
   }, [gameModeId, myInfo.uid, members, effectiveGameId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
@@ -1165,29 +1085,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (myProfileMemberId === id) setMyProfileMemberId(null);
     if (effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave =
-      myProfileMemberId != null && myProfileMemberId !== id
-        ? nextMembers.map((m) =>
-            m.id === myProfileMemberId
-              ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
-              : m
-          )
-        : nextMembers;
-    const payload: GameData = {
+    const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId !== id ? myProfileMemberId : null, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
       gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
       gameMode: gameModeId,
       gameSettings,
       myProfileMemberId: myProfileMemberId === id ? undefined : myProfileMemberId ?? undefined,
-      createdAt: existing.createdAt ?? undefined,
-      createdBy: existing.createdBy ?? undefined,
-      createdByName: existing.createdByName ?? undefined,
-      createdByUid: existing.createdByUid ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
-      importedFromShare: existing.importedFromShare ?? undefined,
-      shareId: existing.shareId ?? undefined,
-    };
+    });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
   }, [members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
@@ -2169,36 +2076,20 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const locationToSave = gameLocationEl?.value?.trim() ?? gameSettings.location;
                 const scoreRaw = gameScoreLimitEl?.value != null ? parseInt(gameScoreLimitEl.value, 10) : gameSettings.scoreLimit;
                 const scoreLimitToSave = Number.isNaN(scoreRaw) ? 21 : Math.max(1, Math.min(99, scoreRaw));
-                const membersToSave =
-                  myProfileMemberId != null && Array.isArray(existing.members)
-                    ? existing.members.map((m: Member) =>
-                        m.id === myProfileMemberId
-                          ? { ...m, name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }
-                          : m
-                      )
-                    : existing.members ?? [];
-                const payload: GameData = {
+                const membersToSave = applyMyProfileToMembers(existing.members ?? [], myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+                const payload = buildGameDataPayload(existing, {
                   members: membersToSave,
                   matches: existing.matches ?? [],
                   gameName: gameNameToSave,
-                  gameMode: existing.gameMode ?? gameModeId,
+                  gameMode: gameModeId,
                   gameSettings: { ...(existing.gameSettings ?? gameSettings), date: dateToSave, time: timeToSave, location: locationToSave, scoreLimit: scoreLimitToSave },
-                  myProfileMemberId: existing.myProfileMemberId ?? myProfileMemberId ?? undefined,
-                  createdAt: existing.createdAt ?? undefined,
-                  createdBy: existing.createdBy ?? undefined,
-                  createdByName: existing.createdByName ?? undefined,
-                  createdByUid: existing.createdByUid ?? undefined,
-                  playingMatchIds: existing.playingMatchIds ?? selectedPlayingMatchIds,
-                  importedFromShare: existing.importedFromShare ?? undefined,
-                  shareId: existing.shareId ?? undefined,
-                };
+                  myProfileMemberId: myProfileMemberId ?? undefined,
+                  playingMatchIds: selectedPlayingMatchIds,
+                });
                 saveGame(effectiveGameId, payload);
-                if (payload.shareId && isSyncAvailable()) {
-                  try {
-                    const ok = await setSharedGame(payload.shareId, payload);
-                    if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload));
-                  } catch (_) {}
-                }
+                uploadSharedGameIfNeeded(payload)
+                  .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
+                  .catch(() => {});
                 setRecordDetailClosing(true);
                 setTimeout(() => {
                   setSelectedGameId(null);

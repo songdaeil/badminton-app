@@ -116,6 +116,21 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
   }
 }
 
+/** 공유 경기 데이터일 때만 Firestore에 업로드. shareId 없거나 sync 불가 시 아무 작업 안 함. */
+export function uploadSharedGameIfNeeded(data: GameData): Promise<boolean | void> {
+  if (!data.shareId || !isSyncAvailable()) return Promise.resolve();
+  return setSharedGame(data.shareId, data);
+}
+
+/** 공유 경기인데 payload가 비어 있고 기존 데이터가 있으면 업로드 스킵 (데이터 유실 방지). */
+export function shouldSkipSharedGameUpload(payload: GameData, localBefore?: GameData): boolean {
+  if (!payload.shareId) return false;
+  const payloadEmpty = (payload.members?.length ?? 0) === 0 && (payload.matches?.length ?? 0) === 0;
+  if (!payloadEmpty) return false;
+  if (!localBefore) return false;
+  return (localBefore.members?.length ?? 0) > 0 || (localBefore.matches?.length ?? 0) > 0;
+}
+
 /** Firestore에서 공유 경기 문서 삭제 (앱에서 경기 카드 삭제 시 호출) */
 export async function deleteSharedGame(shareId: string): Promise<boolean> {
   const ok = await ensureFirebase();

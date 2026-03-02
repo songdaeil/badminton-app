@@ -1,9 +1,20 @@
 import type { Member, Match } from "@/app/types";
 
-const LOCAL_KEY = "badminton-local";
+const LOCAL_KEY = "badminton_local";
+const LEGACY_LOCAL_KEY = "badminton-local";
 
 export function getGameStorageKey(gameId: string | null): string {
   return gameId ? `game-${gameId}` : LOCAL_KEY;
+}
+
+function migrateLocalStorageKey(newKey: string, legacyKey: string): void {
+  if (typeof window === "undefined") return;
+  if (localStorage.getItem(newKey) != null) return;
+  const legacy = localStorage.getItem(legacyKey);
+  if (legacy != null) {
+    localStorage.setItem(newKey, legacy);
+    localStorage.removeItem(legacyKey);
+  }
 }
 
 /** 선택한 경기 방식 기준 설정: 언제, 어디서, 한 경기당 몇 점 */
@@ -40,11 +51,13 @@ export interface MyInfo {
   uid?: string;
 }
 
-const MYINFO_KEY = "badminton-myinfo";
+const MYINFO_KEY = "badminton_myinfo";
+const LEGACY_MYINFO_KEY = "badminton-myinfo";
 export const DEFAULT_MYINFO: MyInfo = { name: "", gender: "M", grade: "D" };
 
 export function loadMyInfo(): MyInfo {
   if (typeof window === "undefined") return { ...DEFAULT_MYINFO };
+  migrateLocalStorageKey(MYINFO_KEY, LEGACY_MYINFO_KEY);
   try {
     const raw = localStorage.getItem(MYINFO_KEY);
     if (raw) {
@@ -106,10 +119,31 @@ export interface GameData {
   shareId?: string | null;
 }
 
-const GAME_LIST_KEY = "badminton-game-list";
+/** 기존 경기 데이터에 덮어쓸 필드만 적용해 새 GameData 생성. createdAt·createdBy·shareId 등은 existing 유지. */
+export function buildGameDataPayload(existing: GameData, overrides: Partial<GameData>): GameData {
+  return {
+    members: overrides.members ?? existing.members ?? [],
+    matches: overrides.matches ?? existing.matches ?? [],
+    gameName: overrides.gameName !== undefined ? overrides.gameName : existing.gameName,
+    gameMode: overrides.gameMode !== undefined ? overrides.gameMode : existing.gameMode,
+    gameSettings: overrides.gameSettings ?? existing.gameSettings ?? { ...DEFAULT_GAME_SETTINGS },
+    myProfileMemberId: overrides.myProfileMemberId !== undefined ? overrides.myProfileMemberId : existing.myProfileMemberId,
+    createdAt: existing.createdAt ?? overrides.createdAt ?? undefined,
+    createdBy: existing.createdBy ?? overrides.createdBy ?? undefined,
+    createdByName: existing.createdByName ?? overrides.createdByName ?? undefined,
+    createdByUid: existing.createdByUid ?? overrides.createdByUid ?? undefined,
+    playingMatchIds: overrides.playingMatchIds !== undefined ? overrides.playingMatchIds : existing.playingMatchIds,
+    importedFromShare: existing.importedFromShare ?? overrides.importedFromShare ?? undefined,
+    shareId: overrides.shareId !== undefined ? overrides.shareId : (existing.shareId ?? undefined),
+  };
+}
+
+const GAME_LIST_KEY = "badminton_game_list";
+const LEGACY_GAME_LIST_KEY = "badminton-game-list";
 
 export function loadGameList(): string[] {
   if (typeof window === "undefined") return [];
+  migrateLocalStorageKey(GAME_LIST_KEY, LEGACY_GAME_LIST_KEY);
   try {
     const raw = localStorage.getItem(GAME_LIST_KEY);
     if (raw) {
@@ -144,6 +178,7 @@ export function loadGame(gameId: string | null): GameData {
     return { members: [], matches: [], gameMode: undefined, gameSettings: { ...DEFAULT_GAME_SETTINGS }, myProfileMemberId: undefined };
   }
   const key = getGameStorageKey(gameId);
+  if (key === LOCAL_KEY) migrateLocalStorageKey(LOCAL_KEY, LEGACY_LOCAL_KEY);
   try {
     const raw = localStorage.getItem(key);
     if (raw) {

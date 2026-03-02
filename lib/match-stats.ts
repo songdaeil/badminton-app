@@ -1,5 +1,19 @@
 import type { Member, Match } from "@/app/types";
 
+/** 내 프로필 멤버에만 이름·성별·급수 반영. 저장 시 단일 소스로 사용. */
+export function applyMyProfileToMembers(
+  members: Member[],
+  myProfileMemberId: string | null,
+  myInfo: { name?: string; gender?: "M" | "F"; grade?: string }
+): Member[] {
+  if (!myProfileMemberId) return members;
+  return members.map((m) =>
+    m.id === myProfileMemberId
+      ? { ...m, name: myInfo.name ?? m.name, gender: (myInfo.gender as "M" | "F") ?? m.gender, grade: (myInfo.grade as Member["grade"]) ?? m.grade }
+      : m
+  );
+}
+
 /** 저장된 경기(score1/score2 있는 것)만으로 멤버별 승/패/득실차 재계산 → 경기 명단 state 갱신용 */
 export function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): Member[] {
   const stats: Record<string, { wins: number; losses: number; pointDiff: number }> = {};
