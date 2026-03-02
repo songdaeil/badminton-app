@@ -177,7 +177,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }, [scoreInputs]);
   /** 경기 목록에서 공유(shareId) 카드 최신 데이터 갱신 후 리스트 다시 그리기용 */
   const [listRefreshKey, setListRefreshKey] = useState(0);
-  const { syncGameListToFirebase, refreshListFromRemote } = useGameListSync(
+  const { syncGameListToFirebase, refreshListFromRemote, bumpApplyGeneration, refreshListDisplay } = useGameListSync(
     authUid,
     useCallback(() => setListRefreshKey((k) => k + 1), [])
   );
@@ -2353,6 +2353,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     return;
                   }
                   addMemberAsMe(name, myInfo.gender ?? "M", myInfo.grade ?? "D");
+                  if (effectiveGameId != null && !loadGameList().includes(effectiveGameId)) {
+                    bumpApplyGeneration();
+                    addGameToList(effectiveGameId);
+                    refreshListDisplay();
+                    syncGameListToFirebase({ added: effectiveGameId });
+                  }
                 }}
                 className="w-full py-2 rounded-xl text-sm font-medium text-[#0071e3] bg-[#0071e3]/10 hover:bg-[#0071e3]/20 transition-colors btn-tap mb-2"
               >

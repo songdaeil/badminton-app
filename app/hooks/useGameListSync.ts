@@ -60,12 +60,15 @@ export function useGameListSync(
 ): {
   syncGameListToFirebase: (opts?: { added?: string; removed?: string; removedShareId?: string }) => void;
   refreshListFromRemote: () => void;
+  bumpApplyGeneration: () => void;
+  refreshListDisplay: () => void;
 } {
   const unsubSharedRef = useRef<(() => void)[]>([]);
   const unsubListRef = useRef<(() => void) | null>(null);
   const prevAuthUidRef = useRef<string | null>(null);
   const currentAuthUidRef = useRef<string | null>(authUid);
   currentAuthUidRef.current = authUid;
+  const applyGenerationRef = useRef(0);
 
   /** 해석된 목록을 로컬에 저장하고, 공유 경기만 실시간 구독 */
   const applyResolvedList = useCallback(
@@ -251,5 +254,13 @@ export function useGameListSync(
       .catch(() => onListChange());
   }, [authUid, onListChange, applyServerList]);
 
-  return { syncGameListToFirebase, refreshListFromRemote };
+  const bumpApplyGeneration = useCallback(() => {
+    applyGenerationRef.current += 1;
+  }, []);
+
+  const refreshListDisplay = useCallback(() => {
+    onListChange();
+  }, [onListChange]);
+
+  return { syncGameListToFirebase, refreshListFromRemote, bumpApplyGeneration, refreshListDisplay };
 }
