@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { createGameId, loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
+import { ensureFirebase } from "@/lib/firebase";
 import {
   getGameListForUid,
   getSharedGame,
@@ -67,6 +68,7 @@ export function useGameListSync(
   refreshListFromRemote: () => void;
 } {
   const unsubSharedRef = useRef<(() => void)[]>([]);
+  const unsubListRef = useRef<(() => void) | null>(null);
   const prevAuthUidRef = useRef<string | null>(null);
   const currentAuthUidRef = useRef<string | null>(authUid);
   currentAuthUidRef.current = authUid;
@@ -135,68 +137,74 @@ export function useGameListSync(
   }, [onListChange]);
 
   useEffect(() => {
-    if (!authUid || typeof window === "undefined" || !isSyncAvailable()) return;
+    if (!authUid || typeof window === "undefined") return;
 
-    // UID가 바뀐 경우에만 로컬 비움 (다른 계정 목록 제거). 같은 UID면 비우지 않아 추가한 경기가 바로 화면에 남음
-    const uidChanged = prevAuthUidRef.current !== authUid;
-    prevAuthUidRef.current = authUid;
-    if (uidChanged) {
-      saveGameList([]);
-      onListChange();
-    }
+    let cancelled = false;
 
-    // 1) 만든 사람(createdByUid) 기준 포함한 목록 로드 후 적용
-    getGameListForUid(authUid).then((entries) => applyServerList(entries, authUid)).catch(() => {});
+    ensureFirebase().then(() => {
+      if (cancelled || !isSyncAvailable()) return;
 
-    // 2) "내가 만든 공유 경기" 중 목록에 없는 것만 Firebase에 추가 → 구독으로 반영
-    getSharedGameIdsByUid(authUid)
-      .then((shareIds) => {
-        getUserGameList(authUid).then((remote) => {
-          const existing = new Set(
-            dedupeByShareId(remote).map((e) => e.shareId).filter((s): s is string => !!s)
-          );
-          const toAdd = shareIds.filter((s) => !existing.has(s));
-          if (toAdd.length === 0) return;
-          Promise.all(
-            toAdd.map((shareId) =>
-              getSharedGame(shareId).then((data) => (data ? { shareId, data } : null))
-            )
-          ).then((results) => {
-            const newEntries: GameListEntry[] = [];
-            results.forEach((r) => {
-              if (!r) return;
-              const newId = createGameId();
-              saveGame(newId, { ...r.data, shareId: r.shareId });
-              newEntries.push({ id: newId, shareId: r.shareId });
-            });
-            if (newEntries.length > 0) mergeUserGameList(authUid, newEntries).catch(() => {});
-          });
-        });
-      })
-      .catch(() => {});
+      // UID가 바뀐 경우에만 로컬 비움 (다른 계정 목록 제거). 같은 UID면 비우지 않아 추가한 경기가 바로 화면에 남음
+      const uidChanged = prevAuthUidRef.current !== authUid;
+      prevAuthUidRef.current = authUid;
+      if (uidChanged) {
+        saveGameList([]);
+        onListChange();
+      }
 
-    // 구독 시에도 목록 전체(만든 경기 + 참여한 경기) 적용 (getGameListForUid와 동일 규칙)
-    const unsub = subscribeUserGameList(
-      authUid,
-      (entries) => {
-        getSharedGameIdsByUid(authUid)
-          .then((createdIds) => {
-            const mine: GameListEntry[] = [...entries];
-            const existingShareIds = new Set(
-              mine.map((e) => e.shareId).filter((s): s is string => typeof s === "string" && s.length > 0)
+      // 1) 만든 사람(createdByUid) 기준 포함한 목록 로드 후 적용
+      getGameListForUid(authUid).then((entries) => applyServerList(entries, authUid)).catch(() => {});
+
+      // 2) "내가 만든 공유 경기" 중 목록에 없는 것만 Firebase에 추가 → 구독으로 반영
+      getSharedGameIdsByUid(authUid)
+        .then((shareIds) => {
+          getUserGameList(authUid).then((remote) => {
+            const existing = new Set(
+              dedupeByShareId(remote).map((e) => e.shareId).filter((s): s is string => !!s)
             );
-            for (const shareId of createdIds) {
-              if (!existingShareIds.has(shareId)) {
-                mine.push({ id: shareId, shareId });
-                existingShareIds.add(shareId);
+            const toAdd = shareIds.filter((s) => !existing.has(s));
+            if (toAdd.length === 0) return;
+            Promise.all(
+              toAdd.map((shareId) =>
+                getSharedGame(shareId).then((data) => (data ? { shareId, data } : null))
+              )
+            ).then((results) => {
+              const newEntries: GameListEntry[] = [];
+              results.forEach((r) => {
+                if (!r) return;
+                const newId = createGameId();
+                saveGame(newId, { ...r.data, shareId: r.shareId });
+                newEntries.push({ id: newId, shareId: r.shareId });
+              });
+              if (newEntries.length > 0) mergeUserGameList(authUid, newEntries).catch(() => {});
+            });
+          });
+        })
+        .catch(() => {});
+
+      // 구독: Firebase 초기화 후에만 subscribeUserGameList 호출 (getDb()가 null이면 구독 누락 방지)
+      unsubListRef.current = subscribeUserGameList(
+        authUid,
+        (entries) => {
+          getSharedGameIdsByUid(authUid)
+            .then((createdIds) => {
+              const mine: GameListEntry[] = [...entries];
+              const existingShareIds = new Set(
+                mine.map((e) => e.shareId).filter((s): s is string => typeof s === "string" && s.length > 0)
+              );
+              for (const shareId of createdIds) {
+                if (!existingShareIds.has(shareId)) {
+                  mine.push({ id: shareId, shareId });
+                  existingShareIds.add(shareId);
+                }
               }
-            }
-            applyServerList(dedupeByShareId(mine), authUid);
-          })
-          .catch(() => applyServerList(entries, authUid));
-      },
-      () => {}
-    );
+              applyServerList(dedupeByShareId(mine), authUid);
+            })
+            .catch(() => applyServerList(entries, authUid));
+        },
+        () => {}
+      );
+    });
 
     const onFocus = () => ensureSubscriptionsForCurrentList();
     if (typeof window !== "undefined") {
@@ -204,7 +212,9 @@ export function useGameListSync(
     }
 
     return () => {
-      unsub?.();
+      cancelled = true;
+      unsubListRef.current?.();
+      unsubListRef.current = null;
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onFocus);
       }

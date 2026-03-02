@@ -29,138 +29,22 @@ import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
 import { useGameListSync } from "@/app/hooks/useGameListSync";
-/** 공유 링크용 경기 데이터 직렬화 (base64url) - 만든 이 정보 포함 */
-function encodeGameForShare(data: GameData): string {
-  const payload = {
-    members: data.members,
-    matches: data.matches,
-    gameName: data.gameName ?? undefined,
-    gameMode: data.gameMode,
-    gameSettings: data.gameSettings ?? DEFAULT_GAME_SETTINGS,
-    myProfileMemberId: data.myProfileMemberId ?? undefined,
-    createdAt: data.createdAt ?? undefined,
-    createdBy: data.createdBy ?? undefined,
-    createdByName: data.createdByName ?? undefined,
-    createdByUid: data.createdByUid ?? undefined,
-  };
-  const json = JSON.stringify(payload);
-  const base64 = btoa(encodeURIComponent(json));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** 공유 링크에서 경기 데이터 복원 */
-function decodeGameFromShare(encoded: string): GameData | null {
-  try {
-    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-    const json = decodeURIComponent(atob(padded));
-    const p = JSON.parse(json) as GameData;
-    if (!p || !Array.isArray(p.members) || !Array.isArray(p.matches)) return null;
-    return {
-      members: p.members,
-      matches: p.matches,
-      gameName: p.gameName ?? undefined,
-      gameMode: p.gameMode,
-      gameSettings: p.gameSettings ?? { ...DEFAULT_GAME_SETTINGS },
-      myProfileMemberId: p.myProfileMemberId ?? undefined,
-      createdAt: typeof p.createdAt === "string" ? p.createdAt : undefined,
-      createdBy: typeof p.createdBy === "string" ? p.createdBy : undefined,
-      createdByName: typeof p.createdByName === "string" ? p.createdByName : undefined,
-      createdByUid: typeof p.createdByUid === "string" ? p.createdByUid : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** 저장된 경기(score1/score2 있는 것)만으로 멤버별 승/패/득실차 재계산 → 경기 명단 state 갱신용 */
-function recomputeMemberStatsFromMatches(members: Member[], matches: Match[]): Member[] {
-  const stats: Record<string, { wins: number; losses: number; pointDiff: number }> = {};
-  for (const m of members) stats[m.id] = { wins: 0, losses: 0, pointDiff: 0 };
-  for (const match of matches) {
-    if (match.score1 == null || match.score2 == null) continue;
-    const s1 = match.score1;
-    const s2 = match.score2;
-    if (s1 === 0 && s2 === 0) continue; // 0:0은 미입력으로 간주, 승패 미반영
-    if (s1 === s2) continue; // 동점은 승패 미반영
-    const diff = Math.abs(s1 - s2);
-    const team1Won = s1 > s2;
-    for (const p of match.team1.players) {
-      if (stats[p.id]) {
-        stats[p.id].wins += team1Won ? 1 : 0;
-        stats[p.id].losses += team1Won ? 0 : 1;
-        stats[p.id].pointDiff += team1Won ? diff : -diff;
-      }
-    }
-    for (const p of match.team2.players) {
-      if (stats[p.id]) {
-        stats[p.id].wins += team1Won ? 0 : 1;
-        stats[p.id].losses += team1Won ? 1 : 0;
-        stats[p.id].pointDiff += team1Won ? -diff : diff;
-      }
-    }
-  }
-  return members.map((m) => ({
-    ...m,
-    wins: stats[m.id]?.wins ?? 0,
-    losses: stats[m.id]?.losses ?? 0,
-    pointDiff: stats[m.id]?.pointDiff ?? 0,
-  }));
-}
-
-/** 경기 결과 전용: 경기 현황(matches)만으로 참가 멤버와 승/패/득실차 산출. 명단 삭제와 무관하게 현황 기준만 따름 */
-function buildRankingFromMatchesOnly(matches: Match[], gradeOrder: Record<string, number>): Member[] {
-  const byId = new Map<string, Member>();
-  const stats: Record<string, { wins: number; losses: number; pointDiff: number }> = {};
-  for (const match of matches) {
-    for (const p of match.team1.players) {
-      if (!byId.has(p.id)) {
-        byId.set(p.id, { ...p, wins: 0, losses: 0, pointDiff: 0 });
-        stats[p.id] = { wins: 0, losses: 0, pointDiff: 0 };
-      }
-    }
-    for (const p of match.team2.players) {
-      if (!byId.has(p.id)) {
-        byId.set(p.id, { ...p, wins: 0, losses: 0, pointDiff: 0 });
-        stats[p.id] = { wins: 0, losses: 0, pointDiff: 0 };
-      }
-    }
-  }
-  for (const match of matches) {
-    if (match.score1 == null || match.score2 == null) continue;
-    const s1 = match.score1;
-    const s2 = match.score2;
-    if (s1 === 0 && s2 === 0) continue;
-    if (s1 === s2) continue;
-    const diff = Math.abs(s1 - s2);
-    const team1Won = s1 > s2;
-    for (const p of match.team1.players) {
-      if (stats[p.id]) {
-        stats[p.id].wins += team1Won ? 1 : 0;
-        stats[p.id].losses += team1Won ? 0 : 1;
-        stats[p.id].pointDiff += team1Won ? diff : -diff;
-      }
-    }
-    for (const p of match.team2.players) {
-      if (stats[p.id]) {
-        stats[p.id].wins += team1Won ? 0 : 1;
-        stats[p.id].losses += team1Won ? 1 : 0;
-        stats[p.id].pointDiff += team1Won ? -diff : diff;
-      }
-    }
-  }
-  const list = Array.from(byId.values()).map((m) => ({
-    ...m,
-    wins: stats[m.id]?.wins ?? 0,
-    losses: stats[m.id]?.losses ?? 0,
-    pointDiff: stats[m.id]?.pointDiff ?? 0,
-  }));
-  return list.sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
-    return (gradeOrder[a.grade] ?? 0) - (gradeOrder[b.grade] ?? 0);
-  });
-}
+import { decodeGameFromShare, encodeGameForShare } from "@/lib/game-share";
+import { buildRankingFromMatchesOnly, recomputeMemberStatsFromMatches } from "@/lib/match-stats";
+import {
+  createId,
+  formatEstimatedDuration,
+  formatSavedAt,
+  GAME_MODES,
+  getMaxCourts,
+  getTargetTotalGames,
+  generateMatchesByGameMode,
+  GRADE_ORDER,
+  MINUTES_PER_21PT_GAME,
+  TIME_OPTIONS_30MIN,
+} from "@/lib/game-mode-utils";
+import { PRIMARY, PRIMARY_LIGHT } from "@/app/constants";
+import { AddMemberForm } from "@/app/components/AddMemberForm";
 
 /** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
 const GAME_CATEGORIES = [
@@ -170,286 +54,7 @@ const GAME_CATEGORIES = [
   { id: "team", label: "단체", Icon: IconCategoryUsersRound },
 ] as const;
 
-/** 경기 방식 목록. 선택한 방식이 경기 설정(한 경기당 몇 점 등)에 반영됨 */
-const GAME_MODES: GameMode[] = [
-  {
-    id: "individual",
-    label: "개인전a",
-    categoryId: "doubles",
-    minPlayers: 4,
-    maxPlayers: 12,
-    defaultScoreLimit: 21,
-    scoreLimitOptions: [15, 21, 30],
-  },
-  {
-    id: "individual_b",
-    label: "개인전b",
-    categoryId: "doubles",
-    minPlayers: 4,
-    maxPlayers: 12,
-    defaultScoreLimit: 21,
-    scoreLimitOptions: [15, 21, 30],
-  },
-];
-
-const PRIMARY = "#0071e3";
-const PRIMARY_LIGHT = "rgba(0, 113, 227, 0.08)";
-
-const GRADE_ORDER: Record<Grade, number> = { A: 0, B: 1, C: 2, D: 3 };
-
-/** 21점 1경기당 예상 소요 시간(분). 소요시간 표시용 */
-const MINUTES_PER_21PT_GAME = 15;
-
-/** 코트 수: 최소 1, 병렬 진행 가능 시 최대 2 */
-const MIN_COURTS = 1;
-const MAX_COURTS = 2;
-
-/** 병렬 조건: 인원이 많아 동시에 두 경기 돌리기 적당하면 추가 코트 반영 (8명 이상) */
-function canUseParallelCourts(players: number): boolean {
-  return players >= 8;
-}
-
-function getRecommendedCourts(players: number): number {
-  return canUseParallelCourts(players) ? MAX_COURTS : MIN_COURTS;
-}
-
-function getMinCourts(_players: number): number {
-  return MIN_COURTS;
-}
-
-function getMaxCourts(players: number): number {
-  return canUseParallelCourts(players) ? MAX_COURTS : MIN_COURTS;
-}
-
-// ---------------------------------------------------------------------------
-// 개인전 (4~12명) 경기 생성 로직 — 핵심 단일 소스
-// 1. 파트너 돌아가며 배치, 중복 최소화
-// 2. 상대팀 돌아가며 배치, 중복 최소화
-// 3. 인원·총 경기 수·인당 경기 수는 아래 테이블 준수 (인당 경기 수 = 동일하게 공정)
-// 4. 경기 방식 섹션 테이블과 경기 목록 "경기 생성"이 동일 로직 사용
-// ---------------------------------------------------------------------------
-
-/** 인원수별 목표 총 경기 수 (사용자 지정 테이블). 인당 경기 수 = (총 경기 수 * 4) / 인원 → 반드시 동일. */
-const TARGET_TOTAL_GAMES_TABLE: Record<number, number> = {
-  4: 3,
-  5: 5,
-  6: 9,
-  7: 14,
-  8: 14,
-  9: 18,
-  10: 20,
-  11: 33,
-  12: 33,
-};
-
-/** 분 단위를 "N분" / "N시간 M분"으로 표시 */
-function formatEstimatedDuration(totalMinutes: number): string {
-  if (totalMinutes < 60) return `${totalMinutes}분`;
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  return m > 0 ? `${h}시간 ${m}분` : `${h}시간`;
-}
-
-/** 30분 단위 시작 시간 옵션 (00:00 ~ 23:30) */
-const TIME_OPTIONS_30MIN: string[] = (() => {
-  const opts: string[] = [];
-  for (let h = 0; h < 24; h++) {
-    opts.push(`${h.toString().padStart(2, "0")}:00`, `${h.toString().padStart(2, "0")}:30`);
-  }
-  return opts;
-})();
-
-function createId() {
-  return Math.random().toString(36).slice(2, 11);
-}
-
-/** 저장 시각을 짧게 표시 (M/D HH:mm:ss) — 저장 여부 확인용 */
-function formatSavedAt(iso?: string | null): string {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    const h = d.getHours().toString().padStart(2, "0");
-    const min = d.getMinutes().toString().padStart(2, "0");
-    const sec = d.getSeconds().toString().padStart(2, "0");
-    return `${d.getMonth() + 1}/${d.getDate()} ${h}:${min}:${sec}`;
-  } catch {
-    return "";
-  }
-}
-
-/** 개인전 목표 총 경기 수. 테이블 값 사용 → 경기 생성 결과와 항상 일치. 인당 경기 수 = (total*4)/n (동일·공정). */
-function getTargetTotalGames(n: number): number {
-  if (n < 4 || n > 12) return 0;
-  return TARGET_TOTAL_GAMES_TABLE[n] ?? 0;
-}
-
-function pairKey(i: number, j: number): string {
-  return i < j ? `${i},${j}` : `${j},${i}`;
-}
-
-/**
- * 개인전 대진 생성: 테이블의 총 경기 수 정확히 맞춤. 인당 경기 수 동일(공정).
- * 파트너·상대팀 돌아가며 배치하며 중복 최소화(그리디).
- */
-function buildRoundRobinMatches(members: Member[], targetTotal: number): Match[] {
-  const n = members.length;
-  if (n < 4 || targetTotal <= 0) return [];
-  const perPlayer = (targetTotal * 4) / n;
-  if (perPlayer !== Math.floor(perPlayer)) return []; // 불가능한 조합 방지
-
-  const appearances = new Array<number>(n).fill(0);
-  const partnerCount = new Map<string, number>();
-  const opponentCount = new Map<string, number>();
-  const selected: { pair1: [number, number]; pair2: [number, number] }[] = [];
-
-  function getPartner(a: number, b: number): number {
-    return partnerCount.get(pairKey(a, b)) ?? 0;
-  }
-  function getOpponent(a: number, b: number): number {
-    return opponentCount.get(pairKey(a, b)) ?? 0;
-  }
-
-  for (let step = 0; step < targetTotal; step++) {
-    let best: { a: number; b: number; c: number; d: number } | null = null;
-    let bestScore = Infinity;
-
-    for (let a = 0; a < n; a++) {
-      for (let b = a + 1; b < n; b++) {
-        if (appearances[a] >= perPlayer || appearances[b] >= perPlayer) continue;
-        for (let c = 0; c < n; c++) {
-          if (c === a || c === b) continue;
-          for (let d = c + 1; d < n; d++) {
-            if (d === a || d === b) continue;
-            if (appearances[c] >= perPlayer || appearances[d] >= perPlayer) continue;
-            const partnerScore = getPartner(a, b) + getPartner(c, d);
-            const oppScore =
-              getOpponent(a, c) + getOpponent(a, d) + getOpponent(b, c) + getOpponent(b, d);
-            const after = [...appearances];
-            after[a]++;
-            after[b]++;
-            after[c]++;
-            after[d]++;
-            const range = Math.max(...after) - Math.min(...after);
-            const score = partnerScore * 2 + oppScore + range * 100;
-            if (score < bestScore) {
-              bestScore = score;
-              best = { a, b, c, d };
-            }
-          }
-        }
-      }
-    }
-
-    if (!best) break;
-    const { a, b, c, d } = best;
-    selected.push({ pair1: [a, b], pair2: [c, d] });
-    appearances[a]++;
-    appearances[b]++;
-    appearances[c]++;
-    appearances[d]++;
-    partnerCount.set(pairKey(a, b), getPartner(a, b) + 1);
-    partnerCount.set(pairKey(c, d), getPartner(c, d) + 1);
-    for (const x of [a, b]) {
-      for (const y of [c, d]) {
-        const k = pairKey(x, y);
-        opponentCount.set(k, getOpponent(x, y) + 1);
-      }
-    }
-  }
-
-  return selected.map(({ pair1: [a, b], pair2: [c, d] }) => ({
-    id: createId(),
-    team1: { id: createId(), players: [members[a], members[b]] },
-    team2: { id: createId(), players: [members[c], members[d]] },
-    score1: null,
-    score2: null,
-    savedAt: null,
-    savedBy: null,
-    savedHistory: [],
-  }));
-}
-
-/**
- * 선정한 경기 방식에 따라 경기를 생성하는 단일 진입점.
- * 경기 목록에서 "경기 생성" 시 반드시 이 함수만 사용하여, 경기 방식 섹션에서 정의한 로직과 일치시킴.
- */
-function generateMatchesByGameMode(gameModeId: string, members: Member[]): Match[] {
-  if (gameModeId === "individual" || gameModeId === "individual_b") {
-    const target = getTargetTotalGames(members.length);
-    return buildRoundRobinMatches(members, target);
-  }
-  return [];
-}
-
 const MAX_MEMBERS = 12;
-
-function AddMemberForm({
-  onAdd,
-  primaryColor,
-  membersCount = 0,
-  maxMembers = MAX_MEMBERS,
-}: {
-  onAdd: (name: string, gender: "M" | "F", grade: Grade) => void;
-  primaryColor: string;
-  membersCount?: number;
-  maxMembers?: number;
-}) {
-  const [name, setName] = useState("");
-  const [gender, setGender] = useState<"M" | "F">("M");
-  const [grade, setGrade] = useState<Grade>("B");
-  const atLimit = membersCount >= maxMembers;
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (atLimit) return;
-    onAdd(name, gender, grade);
-    setName("");
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-1.5">
-      <div className="flex-1 min-w-0">
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="이름"
-          aria-label="이름"
-          className="w-full px-2 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-        />
-      </div>
-      <select
-        value={gender}
-        onChange={(e) => setGender(e.target.value as "M" | "F")}
-        aria-label="성별"
-        className="shrink-0 w-14 px-1.5 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-      >
-        <option value="M">남</option>
-        <option value="F">여</option>
-      </select>
-      <select
-        value={grade}
-        onChange={(e) => setGrade(e.target.value as Grade)}
-        aria-label="급수"
-        className="shrink-0 w-12 px-1.5 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-      >
-        <option value="A">A</option>
-        <option value="B">B</option>
-        <option value="C">C</option>
-        <option value="D">D</option>
-      </select>
-      <button
-        type="submit"
-        disabled={atLimit}
-        className="shrink-0 py-1.5 px-3 rounded-lg font-medium text-white text-sm hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-        style={{ backgroundColor: primaryColor }}
-      >
-        추가
-      </button>
-      {atLimit && <p className="w-full text-xs text-slate-400">경기 인원은 최대 {maxMembers}명까지입니다.</p>}
-    </form>
-  );
-}
 
 export function GameView({ gameId }: { gameId: string | null }) {
   const router = useRouter();
@@ -1603,28 +1208,36 @@ export function GameView({ gameId }: { gameId: string | null }) {
   };
 
   /** 진행중으로 선택된 매치들 (id 문자열로 통일). 종료된 경기는 진행에서 제외 → 실제 코트에서 겨루는 경기만 */
-  const playingMatchIdsSet = new Set(selectedPlayingMatchIds.map((id) => String(id)));
-  const playingMatches = matches.filter(
-    (m) => playingMatchIdsSet.has(String(m.id)) && m.score1 == null && m.score2 == null
+  const playingMatchIdsSet = useMemo(
+    () => new Set(selectedPlayingMatchIds.map((id) => String(id))),
+    [selectedPlayingMatchIds]
+  );
+  const playingMatches = useMemo(
+    () =>
+      matches.filter(
+        (m) => playingMatchIdsSet.has(String(m.id)) && m.score1 == null && m.score2 == null
+      ),
+    [matches, playingMatchIdsSet]
   );
 
   /** 진행 표식된 경기에만 참가한 선수 id = 지금 코트에서 경기 중인 인원. 나머지 = 쉬는 인원. */
-  const playingIds = new Set<string>();
-  for (const pm of playingMatches) {
-    for (const id of getMatchPlayerIds(pm)) {
-      playingIds.add(String(id));
+  const playingIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const pm of playingMatches) {
+      for (const id of getMatchPlayerIds(pm)) s.add(String(id));
     }
-  }
-  /** 쉬는 인원 id 집합 (진행 외 전원 = 종료한 사람 포함 모두 쉬는 중) */
-  const restingIds = new Set(members.map((m) => String(m.id)).filter((id) => !playingIds.has(id)));
-  const waitingMembers = members.filter((m) => !playingIds.has(String(m.id)));
+    return s;
+  }, [playingMatches]);
 
-  /** 이 경기 4명이 전원 '쉬는 인원'이면 true → 가능(바로 시작 가능). 진행 중인 사람이 1명이라도 있으면 대기. */
-  const matchPlayersAllWaiting = (match: Match): boolean => {
-    const ids = getMatchPlayerIds(match);
-    if (ids.length !== 4) return false;
-    return ids.every((id) => restingIds.has(String(id)));
-  };
+  /** 쉬는 인원 id 집합 (진행 외 전원 = 종료한 사람 포함 모두 쉬는 중) */
+  const restingIds = useMemo(
+    () => new Set(members.map((m) => String(m.id)).filter((id) => !playingIds.has(id))),
+    [members, playingIds]
+  );
+  const waitingMembers = useMemo(
+    () => members.filter((m) => !playingIds.has(String(m.id))),
+    [members, playingIds]
+  );
 
   /**
    * 가능 = 바로 시작할 수 있는 경기.
@@ -1632,21 +1245,33 @@ export function GameView({ gameId }: { gameId: string | null }) {
    * - 진행 중인 경기가 있으면 → 4명 모두 진행 외 인원인 경기만 가능.
    * 진행 중 = 선택됐고 아직 미종료인 경기만 (종료된 경기는 진행에서 제외).
    */
-  const hasPlayingInList = selectedPlayingMatchIds.some((id) => {
-    const m = matches.find((x) => String(x.id) === String(id));
-    return m != null && m.score1 == null && m.score2 == null;
-  });
+  const hasPlayingInList = useMemo(
+    () =>
+      selectedPlayingMatchIds.some((id) => {
+        const m = matches.find((x) => String(x.id) === String(id));
+        return m != null && m.score1 == null && m.score2 == null;
+      }),
+    [selectedPlayingMatchIds, matches]
+  );
   const noPlayingSelected = !hasPlayingInList;
-  const playableMatches = matches.filter((m) => {
-    const isFinished = m.score1 != null && m.score2 != null;
-    if (isFinished) return false;
-    if (playingMatchIdsSet.has(String(m.id))) return false;
-    if (noPlayingSelected) return true; // 진행 없음 → 종료 이외 전부 가능
-    return matchPlayersAllWaiting(m);
-  });
+  const playableMatches = useMemo(
+    () =>
+      matches.filter((m) => {
+        const isFinished = m.score1 != null && m.score2 != null;
+        if (isFinished) return false;
+        if (playingMatchIdsSet.has(String(m.id))) return false;
+        if (noPlayingSelected) return true; // 진행 없음 → 종료 이외 전부 가능
+        const ids = getMatchPlayerIds(m);
+        return ids.length === 4 && ids.every((id) => restingIds.has(String(id)));
+      }),
+    [matches, playingMatchIdsSet, noPlayingSelected, restingIds]
+  );
   const canStartNext = playableMatches.length > 0;
   /** 가능한 경기 id 집합 (표식 반영용, id 문자열 통일) */
-  const playableMatchIdsSet = new Set(playableMatches.map((m) => String(m.id)));
+  const playableMatchIdsSet = useMemo(
+    () => new Set(playableMatches.map((m) => String(m.id))),
+    [playableMatches]
+  );
 
   /**
    * 진행 토글: 한 사람은 한 경기에만 진행으로 있을 수 있음 (중복 불가).

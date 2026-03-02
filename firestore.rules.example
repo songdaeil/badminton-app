@@ -5,5 +5,13 @@ service cloud.firestore {
     match /sharedGames/{shareId} {
       allow read, write: if true;
     }
+    // 로그인 사용자 프로필: 본인 UID 문서만 읽기/쓰기 (다른 기기 동기화)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    // 로그인 사용자 경기 목록: 본인 UID 문서만 읽기/쓰기 (경기 목록 동기화)
+    match /userGameLists/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }
