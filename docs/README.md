@@ -1,16 +1,17 @@
 # 배드민턴 경기 관리 앱 — 문서
 
-이 문서는 프로젝트 구조, Firebase 설정, 경기 목록 동기화를 한 곳에서 관리합니다.
+이 문서는 **사용자 운영 시나리오**를 기준으로, 프로젝트 구조, Firebase 설정, 경기 목록 동기화를 한 곳에서 관리합니다.
 
 ---
 
 ## 목차
 
 1. [프로젝트 소개 및 실행](#1-프로젝트-소개-및-실행)
-2. [프로젝트 구조](#2-프로젝트-구조)
-3. [Firebase 설정](#3-firebase-설정)
-4. [경기 목록 동기화](#4-경기-목록-동기화)
-5. [사용자 시나리오·구조 이해 및 개선 제안](#5-사용자-시나리오구조-이해-및-개선-제안)
+2. [사용자 운영 시나리오](#2-사용자-운영-시나리오)
+3. [프로젝트 구조](#3-프로젝트-구조)
+4. [Firebase 설정](#4-firebase-설정)
+5. [경기 목록 동기화](#5-경기-목록-동기화)
+6. [구조 이해 및 개선 제안](#6-구조-이해-및-개선-제안)
 
 ---
 
@@ -29,15 +30,127 @@ npm run dev
 
 브라우저에서 [http://localhost:3000](http://localhost:3000) 접속.
 
-Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [Firebase 설정](#3-firebase-설정)을 참고해 `.env.local`에 환경 변수를 넣은 뒤 서버를 재시작하세요.
+Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [Firebase 설정](#4-firebase-설정)을 참고해 `.env.local`에 환경 변수를 넣은 뒤 서버를 재시작하세요.
 
 ---
 
-## 2. 프로젝트 구조
+## 2. 사용자 운영 시나리오
+
+**사용자 운영 시나리오는 이 문서의 기준**입니다. 프로젝트 구조(3), Firebase 설정(4), 경기 목록 동기화(5), 구조 이해 및 개선 제안(6)은 모두 이 시나리오를 전제로 합니다. 각 시나리오별 **조작 순서**는 아래 순서도로 확인할 수 있습니다.
+
+### 전체 흐름
+
+```mermaid
+flowchart TB
+  subgraph entry [앱 진입]
+    Start[앱 접속]
+    Gate[로그인 게이트]
+    Main[메인 3탭]
+  end
+  Start --> Gate
+  Gate -->|이메일/전화| Main
+  Main --> Setting[경기 세팅]
+  Main --> Record[경기 목록/상세]
+  Main --> MyInfo[나의 정보]
+  MyInfo --> ProfileSync[프로필 동기화]
+  Record --> Share[공유]
+  Record --> ListSync[경기 목록 동기화]
+```
+
+### 시나리오 요약 표
+
+| 시나리오 | 흐름 | 관련 코드 |
+|----------|------|-----------|
+| 앱 진입·로그인 | 로그인 게이트(이메일/전화) → 메인(경기 방식·경기 목록·나의 정보 탭) | page.tsx 로그인 게이트, onAuthStateChanged, 나의 정보 탭 |
+| 경기 세팅 | 경기 방식 선택 → 명단 추가 → 경기 생성 → 목록에 추가 | page.tsx 경기 방식 섹션, AddMemberForm, doMatch, addGameToRecord |
+| 경기 목록·상세 | 목록에서 경기 선택 → 상세(요약·명단·대진·경기 현황·랭킹) → 점수 입력·저장 | page.tsx record 섹션, loadGameList/loadGame, saveResult |
+| 공유 | 공유 버튼 → Firestore 업로드/기존 shareId 사용 → 링크 복사 → 다른 기기에서 링크로 진입 | handleShareCard, processShareAndOpenDetail, subscribeSharedGame |
+| 경기 목록 동기화 | 로그인 후 목록을 Firebase에서 로드·구독 → 추가/삭제 시 원격 반영 | useGameListSync, getUserGameList, subscribeUserGameList |
+| 프로필 동기화 | 로그인 시 Firestore에서 프로필 로드 → 수정 후 업로드 | getRemoteProfile, setRemoteProfile, uploadProfileToFirestore |
+
+아래는 각 시나리오별 **조작 순서**를 순서도로 상세히 나타낸 것입니다.
+
+### 앱 진입·로그인
+
+앱 접속 후 로그인 게이트에서 이메일 또는 전화로 로그인하면 메인(경기 방식·경기 목록·나의 정보 탭)으로 진입합니다.
+
+```mermaid
+flowchart LR
+  A[앱 접속] --> B[로그인 게이트]
+  B --> C{선택}
+  C -->|이메일| D[메인]
+  C -->|전화| D
+  D --> E[경기 방식 탭]
+  D --> F[경기 목록 탭]
+  D --> G[나의 정보 탭]
+```
+
+### 경기 세팅
+
+경기 방식 선택 → 명단 추가 → 경기 생성 → 목록에 추가 순서로 진행합니다.
+
+```mermaid
+flowchart LR
+  A[경기 방식 선택] --> B[명단 추가]
+  B --> C[경기 생성]
+  C --> D[목록에 추가]
+```
+
+### 경기 목록·상세
+
+목록에서 경기를 선택하면 상세 화면(요약·명단·대진·경기 현황·랭킹)이 열리고, 점수 입력 후 저장합니다.
+
+```mermaid
+flowchart LR
+  A[목록에서 경기 선택] --> B[상세 화면]
+  B --> C[요약/명단/대진/현황/랭킹]
+  C --> D[점수 입력]
+  D --> E[저장]
+```
+
+### 공유
+
+공유 버튼 클릭 시 기존 shareId가 있으면 재사용, 없으면 Firestore에 업로드한 뒤 링크를 복사하고, 다른 기기에서 해당 링크로 진입할 수 있습니다.
+
+```mermaid
+flowchart LR
+  A[공유 버튼] --> B{shareId 있음?}
+  B -->|예| C[기존 shareId 사용]
+  B -->|아니오| D[Firestore 업로드]
+  C --> E[링크 복사]
+  D --> E
+  E --> F[다른 기기에서 링크 진입]
+```
+
+### 경기 목록 동기화
+
+로그인 후 Firebase에서 경기 목록을 로드·구독하고, 추가/삭제 시 원격에 반영됩니다.
+
+```mermaid
+flowchart LR
+  A[로그인] --> B[Firebase 목록 로드]
+  B --> C[구독 설정]
+  C --> D[추가/삭제 시 원격 반영]
+```
+
+### 프로필 동기화
+
+로그인 시 Firestore에서 프로필을 로드하고, 수정 후 업로드하면 다른 기기에서 동일 프로필을 사용할 수 있습니다.
+
+```mermaid
+flowchart LR
+  A[로그인] --> B[Firestore 프로필 로드]
+  B --> C[프로필 수정]
+  C --> D[업로드]
+```
+
+---
+
+## 3. 프로젝트 구조
 
 배드민턴 경기 관리 앱의 디렉터리·역할 정리.
 
-### 2.1 탐색기 항목별 최하위 경로 및 역할
+### 3.1 탐색기 항목별 최하위 경로 및 역할
 
 왼쪽 탐색기(Explorer)에 보이는 항목별로, 최하위 경로/문서와 그 역할을 정리한 표입니다.
 
@@ -99,7 +212,7 @@ Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [
 | **README.md** | `README.md` | 루트 README. 프로젝트 소개·실행 방법·docs/README.md 링크. |
 | **tsconfig.json** | `tsconfig.json` | TypeScript 컴파일 설정. 대상, 모듈, 경로 별칭(@/ 등). |
 
-### 2.2 폴더·항목별 사용 여부·중복 검토 및 정리 방향
+### 3.2 폴더·항목별 사용 여부·중복 검토 및 정리 방향
 
 아래 표는 각 폴더·파일의 **실제 사용 여부**, **중복 여부**를 검토한 뒤, **정리 방향**을 제안한 것입니다.
 
@@ -213,7 +326,7 @@ Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [
 
 ---
 
-## 3. Firebase 설정
+## 4. Firebase 설정
 
 이 앱에서는 **Firestore**(경기 공유·경기 목록·프로필 동기화)와 **Authentication**(이메일/전화번호 로그인)을 사용합니다.
 
@@ -230,21 +343,21 @@ Firebase(경기 공유·로그인·경기 목록 동기화)를 사용하려면 [
 | 7 | **Blaze 요금제**로 업그레이드 (전화 인증용) | 프로젝트 설정 → 사용량 및 결제 |
 | 8 | `.env.local`에 6개 값 넣고 서버 재시작 | 로컬 / 배포 시 환경 변수 동일 적용 |
 
-### 3-1. Firebase 프로젝트 만들기
+### 4-1. Firebase 프로젝트 만들기
 
 1. [Firebase 콘솔](https://console.firebase.google.com/) 접속 후 Google 로그인
 2. **프로젝트 추가** 클릭
 3. 프로젝트 이름 입력(예: `badminton-app`) → **계속**
 4. Google Analytics 사용 여부 선택 후 **프로젝트 만들기** → 완료될 때까지 대기
 
-### 3-2. Firestore 데이터베이스 만들기
+### 4-2. Firestore 데이터베이스 만들기
 
 1. 왼쪽 메뉴에서 **빌드** → **Firestore Database** 클릭
 2. **데이터베이스 만들기** 클릭
 3. **테스트 모드로 시작** 선택(나중에 규칙 수정 예정) → **다음**
 4. 위치 선택(예: `asia-northeast3` 서울) → **사용 설정**
 
-### 3-3. Firestore 보안 규칙 설정
+### 4-3. Firestore 보안 규칙 설정
 
 1. Firestore 화면 상단 **규칙** 탭 클릭
 2. 아래 규칙으로 **전체 교체** 후 **게시**
@@ -273,7 +386,7 @@ service cloud.firestore {
 - **users**: 로그인한 사용자만 자신의 문서(`/users/{본인 uid}`)를 읽고 쓸 수 있습니다. 같은 이메일/전화번호로 다른 기기에서 로그인하면 동일한 프로필이 표시됩니다.
 - **userGameLists**: 로그인한 사용자만 자신의 경기 목록 문서(`/userGameLists/{본인 uid}`)를 읽고 쓸 수 있습니다. 경기 목록 동기화에 필요합니다.
 
-### 3-4. 웹 앱 등록 및 설정값 복사
+### 4-4. 웹 앱 등록 및 설정값 복사
 
 1. 프로젝트 개요 옆 **휠(설정)** 아이콘 → **프로젝트 설정**
 2. **일반** 탭에서 아래로 내려가 **내 앱** 섹션으로 이동
@@ -291,7 +404,7 @@ service cloud.firestore {
 | `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | `messagingSenderId` |
 | `NEXT_PUBLIC_FIREBASE_APP_ID` | `appId` |
 
-### 3-5. 로그인 방법 설정 (Authentication)
+### 4-5. 로그인 방법 설정 (Authentication)
 
 1. 왼쪽 메뉴 **빌드** → **Authentication** 클릭
 2. **시작하기** 클릭(처음이면)
@@ -314,7 +427,7 @@ service cloud.firestore {
 2. **Blaze 플랜으로 업그레이드** 클릭
 3. 결제 수단 등록(무료 할당량 내 사용 시 과금 없음, 소규모 사용 시 비용 거의 없음)
 
-### 3-6. .env.local에 넣기
+### 4-6. .env.local에 넣기
 
 프로젝트 루트의 **`.env.local`** 파일을 열고(없으면 `.env.example`을 복사해 `.env.local`로 저장) 아래 형식으로 추가합니다.
 
@@ -331,7 +444,7 @@ NEXT_PUBLIC_FIREBASE_APP_ID=여기에_appId_값
 - 값만 넣고, 앞뒤 공백 없이, 따옴표 없이 적습니다.
 - `.env.local`은 Git에 올리지 마세요(이미 `.gitignore`에 있을 수 있음).
 
-### 3-7. 개발 서버 재시작
+### 4-7. 개발 서버 재시작
 
 환경 변수는 빌드/실행 시점에 읽히므로, 수정 후 반드시 **개발 서버를 다시 실행**합니다.
 
@@ -340,7 +453,7 @@ NEXT_PUBLIC_FIREBASE_APP_ID=여기에_appId_값
 npm run dev
 ```
 
-### 3-8. 배포 시 (Vercel 등)
+### 4-8. 배포 시 (Vercel 등)
 
 1. Vercel 대시보드 → 해당 프로젝트 → **Settings** → **Environment Variables**
 2. 위 6개 Firebase 변수를 **똑같이** 추가
@@ -358,7 +471,7 @@ npm run dev
 
 ---
 
-## 4. 경기 목록 동기화
+## 5. 경기 목록 동기화
 
 새로고침 시 경기 목록이 어디서 오는지 데이터 소스와 흐름을 정리한 설명입니다.
 
@@ -410,27 +523,16 @@ sequenceDiagram
 
 ---
 
-## 5. 사용자 시나리오·구조 이해 및 개선 제안
+## 6. 구조 이해 및 개선 제안
 
-사용자 운영 시나리오에 맞춰 전체 구조를 정리하고, 성능·유지보수 관점의 문제점과 개선안을 제안합니다.
+사용자 흐름은 [2. 사용자 운영 시나리오](#2-사용자-운영-시나리오)를 참고하세요. 아래는 성능·유지보수 관점의 문제점과 개선안입니다.
 
-### 5.1 사용자 운영 시나리오 요약
-
-| 시나리오 | 흐름 | 관련 코드 |
-|----------|------|-----------|
-| 앱 진입·로그인 | 로그인 게이트(건너뛰기/이메일/전화) → 메인(경기 방식·경기 목록·나의 정보 탭) | page.tsx 로그인 게이트, onAuthStateChanged, 나의 정보 탭 |
-| 경기 세팅 | 경기 방식 선택 → 명단 추가 → 경기 생성 → 목록에 추가 | page.tsx 경기 방식 섹션, AddMemberForm, doMatch, addGameToRecord |
-| 경기 목록·상세 | 목록에서 경기 선택 → 상세(요약·명단·대진·경기 현황·랭킹) → 점수 입력·저장 | page.tsx record 섹션, loadGameList/loadGame, saveResult |
-| 공유 | 공유 버튼 → Firestore 업로드/기존 shareId 사용 → 링크 복사 → 다른 기기에서 링크로 진입 | handleShareCard, processShareAndOpenDetail, subscribeSharedGame |
-| 경기 목록 동기화 | 로그인 후 목록을 Firebase에서 로드·구독 → 추가/삭제 시 원격 반영 | useGameListSync, getUserGameList, subscribeUserGameList |
-| 프로필 동기화 | 로그인 시 Firestore에서 프로필 로드 → 수정 후 업로드 | getRemoteProfile, setRemoteProfile, uploadProfileToFirestore |
-
-### 5.2 현재 구조상 문제점
+### 6.1 현재 구조상 문제점
 
 #### 유지보수 관점
 
 - **app/page.tsx 단일 대형 컴포넌트**: 약 3,500줄으로, 경기 세팅·목록·나의 정보·로그인·공유·모달 등 모든 UI와 상태·핸들러가 한 파일에 있음. 수정·추가 시 충돌과 부담이 크고, 테스트·리뷰가 어렵습니다.
-- **lib와의 중복**: `encodeGameForShare`, `decodeGameFromShare`(lib/game-share.ts), `recomputeMemberStatsFromMatches`, `buildRankingFromMatchesOnly`(lib/match-stats.ts), `buildRoundRobinMatches`, `generateMatchesByGameMode`, `getTargetTotalGames`, `GAME_MODES`, `TARGET_TOTAL_GAMES_TABLE`, `GRADE_ORDER`, `formatSavedAt`, `formatEstimatedDuration`, `createId`, `pairKey` 등이 page.tsx 내부에 다시 정의되어 있습니다. lib 수정 시 page와 불일치할 위험이 있습니다.
+- **lib와의 중복**: game-share, match-stats, game-mode-utils, game-logic 등은 **이미 lib에서 import**하여 사용 중입니다(uploadSharedGameIfNeeded, buildGameDataPayload, applyMyProfileToMembers, encodeGameForShare, decodeGameFromShare, recomputeMemberStatsFromMatches, buildRankingFromMatchesOnly, createId, GRADE_ORDER 등). **남은 과제**: page.tsx 단일 대형 컴포넌트 분리, 파생 값 useMemo, Firebase 구독 전 ensureFirebase 등은 아래 6.2·6.3과 동일하게 유지합니다.
 - **컴포넌트 미사용**: `SettingPanel`, `RecordPanel`, `MyInfoPanel`은 `useGameView()`를 쓰지만, `GameViewProvider`가 page.tsx에서 사용되지 않아 해당 패널은 현재 렌더되지 않습니다. 동일한 역할의 UI가 page.tsx에 인라인으로만 존재합니다.
 - **ID 생성 불일치**: `lib/game-storage.ts`의 `createGameId`는 8자(`slice(2,10)`), `lib/game-logic.ts`·page 내부 `createId`는 9자(`slice(2,11)`). 경기 ID와 매치/팀 ID 출처가 혼재됩니다.
 
@@ -441,7 +543,7 @@ sequenceDiagram
 - **Firebase 구독 시점**: `subscribeUserGameList`는 `getDb()`만 호출합니다. `getDb()`는 `initFirebase()`를 호출하지 않으므로, auth effect보다 먼저 useGameListSync effect가 실행되면 db가 null인 상태에서 구독이 걸리지 않아, 경기 목록 실시간 반영이 동작하지 않을 수 있습니다.
 - **대진 생성 알고리즘**: `buildRoundRobinMatches`는 인원·경기 수에 따라 O(n^4)에 가까운 루프를 매 스텝 돌립니다. 인원이 많을 때 경기 생성 버튼 클릭 시 체감 지연이 생길 수 있습니다.
 
-### 5.3 개선 제안
+### 6.2 개선 제안
 
 #### 유지보수
 
@@ -475,7 +577,7 @@ sequenceDiagram
 4. **대진 생성**:  
    - 인원이 많은 경우(예: 10명 이상)에는 `buildRoundRobinMatches`를 Web Worker로 옮기거나, 단계 수를 줄이는 휴리스틱을 검토해 메인 스레드 블로킹을 줄입니다.
 
-### 5.4 적용 우선순위 제안
+### 6.3 적용 우선순위 제안
 
 | 우선순위 | 항목 | 기대 효과 |
 |----------|------|-----------|

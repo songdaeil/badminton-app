@@ -73,7 +73,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => ({ ...DEFAULT_GAME_SETTINGS }));
   /** 사용자가 선택한 '진행중' 매치 id 목록 (여러 코트 병렬 진행 가능) */
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
-  /** 앱 최초 실행 시 전체화면 로그인 화면 통과 여부 (세션 기준, 건너뛰기/로그인 후 메인 표시) */
+  /** 앱 최초 실행 시 전체화면 로그인 화면 통과 여부 (세션 기준, 로그인 후 메인 표시) */
   const [loginGatePassed, setLoginGatePassed] = useState(false);
   /** 로그인한 사용자 UID (프로필 Firestore 동기화용) */
   const [authUid, setAuthUid] = useState<string | null>(null);
@@ -168,6 +168,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const matchesRef = useRef<Match[]>([]);
   membersRef.current = members;
   matchesRef.current = matches;
+  /** applyMyProfileToMembers에 넘길 나의 프로필 객체 (한 곳에서만 정의해 7곳에서 재사용) */
+  const myProfileForMembers = useMemo(() => ({ name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" }), [myInfo.name, myInfo.gender, myInfo.grade]);
   useEffect(() => {
     scoreInputsRef.current = scoreInputs;
   }, [scoreInputs]);
@@ -692,7 +694,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   useEffect(() => {
     if (!mounted || effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave = applyMyProfileToMembers(members, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const membersToSave = applyMyProfileToMembers(members, myProfileMemberId, myProfileForMembers);
     const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
@@ -923,7 +925,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       inputs[m.id] = { s1: "", s2: "" };
     }
     const membersReset = members.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }));
-    const membersToSave = applyMyProfileToMembers(membersReset, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const membersToSave = applyMyProfileToMembers(membersReset, myProfileMemberId, myProfileForMembers);
     setMatches(newMatches);
     setScoreInputs(inputs);
     setSelectedPlayingMatchIds([]);
@@ -989,7 +991,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setSelectedPlayingMatchIds((prev) => prev.filter((id) => id !== matchId));
       setScoreInputs((prev) => ({ ...prev, [matchId]: { s1: String(s1), s2: String(s2) } }));
 
-      const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+      const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, myProfileForMembers);
       const payload = buildGameDataPayload(existing, {
         members: membersToSave,
         matches: nextMatches,
@@ -1033,7 +1035,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setRosterChangedSinceGenerate(true);
     if (effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, myProfileForMembers);
     const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
@@ -1063,7 +1065,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setRosterChangedSinceGenerate(true);
     if (effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave = applyMyProfileToMembers(nextMembers, newId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const membersToSave = applyMyProfileToMembers(nextMembers, newId, myProfileForMembers);
     const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
@@ -1085,7 +1087,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (myProfileMemberId === id) setMyProfileMemberId(null);
     if (effectiveGameId === null) return;
     const existing = loadGame(effectiveGameId);
-    const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId !== id ? myProfileMemberId : null, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+    const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId !== id ? myProfileMemberId : null, myProfileForMembers);
     const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
@@ -2076,7 +2078,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const locationToSave = gameLocationEl?.value?.trim() ?? gameSettings.location;
                 const scoreRaw = gameScoreLimitEl?.value != null ? parseInt(gameScoreLimitEl.value, 10) : gameSettings.scoreLimit;
                 const scoreLimitToSave = Number.isNaN(scoreRaw) ? 21 : Math.max(1, Math.min(99, scoreRaw));
-                const membersToSave = applyMyProfileToMembers(existing.members ?? [], myProfileMemberId, { name: myInfo.name, gender: myInfo.gender, grade: myInfo.grade ?? "D" });
+                const membersToSave = applyMyProfileToMembers(existing.members ?? [], myProfileMemberId, myProfileForMembers);
                 const payload = buildGameDataPayload(existing, {
                   members: membersToSave,
                   matches: existing.matches ?? [],
