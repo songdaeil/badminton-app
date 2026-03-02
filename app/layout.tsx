@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
+import { PwaInstallPrompt } from "./components/PwaInstallPrompt";
 
 const notoSansKr = Noto_Sans_KR({
   variable: "--font-sans-kr",
@@ -38,6 +39,7 @@ export default function RootLayout({
       <body
         className={`${notoSansKr.variable} ${notoSansKr.className} font-sans antialiased`}
       >
+        <PwaInstallPrompt />
         {children}
       </body>
     </html>
