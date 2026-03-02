@@ -486,12 +486,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
     return () => clearInterval(interval);
   }, [navView, selectedGameId]);
 
-  /** 루트(/)에서 view=record 로 들어온 경우(공유 링크 등): 경기 목록 탭 표시 후 URL 정리 */
+  /** 루트(/)에서 view=record 로 들어온 경우(공유 링크 등): 경기 목록 탭 표시 후 URL 정리. selectedGameId는 건드리지 않음(공유 링크로 상세 진입 시 유지) */
   useEffect(() => {
     if (typeof window === "undefined" || gameId != null) return;
     if (searchParams.get("view") !== "record") return;
     setNavView("record");
-    setSelectedGameId(null);
     router.replace("/", { scroll: false });
   }, [gameId, searchParams, router]);
 
