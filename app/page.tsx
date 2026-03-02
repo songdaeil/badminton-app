@@ -75,6 +75,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
   /** 앱 최초 실행 시 전체화면 로그인 화면 통과 여부 (세션 기준, 로그인 후 메인 표시) */
   const [loginGatePassed, setLoginGatePassed] = useState(false);
+  /** 오프라인 미지원: 네트워크 연결 여부. false면 쓰기 차단·배너 표시 */
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== "undefined" ? navigator.onLine : true));
   /** 로그인한 사용자 UID (프로필 Firestore 동기화용) */
   const [authUid, setAuthUid] = useState<string | null>(null);
   /** 로그인 후 프로필 업로드 완료 여부 (true: 원격 로드됨 또는 업로드 성공. 이전에만 경기 방식·경기 목록 이용 가능) */
@@ -660,6 +662,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
     return () => window.removeEventListener("popstate", handlePop);
   }, [loginGatePassed]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
   /** 프로필을 Firestore에 업로드 (업로드 후에만 경기 방식·경기 목록 이용 가능) */
   const uploadProfileToFirestore = useCallback(async () => {
     const uid = getCurrentUserUid();
@@ -753,12 +767,23 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, myInfo.name, myInfo.gender, myInfo.grade, mounted, isGameSummaryEditable]);
 
 
+  /** 경기 생성 후 목록에 추가. 서버(sharedGames) 저장 성공 시에만 목록에 반영. 로그인·네트워크 필수. 오프라인 미지원. */
   const addGameToRecord = useCallback(() => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setShareToast("네트워크가 필요합니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
+    const creatorUid = myInfo.uid ?? getCurrentUserUid();
+    if (!creatorUid || !isSyncAvailable()) {
+      setShareToast("저장에 실패했습니다. 로그인 및 네트워크를 확인하세요.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
     const id = createGameId();
     const mode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
     const defaultScore = mode.defaultScoreLimit ?? 21;
     const creatorName = myProfileMemberId ? members.find((m) => m.id === myProfileMemberId)?.name : null;
-    const creatorUid = myInfo.uid ?? getCurrentUserUid();
     const payload: GameData = {
       members: [],
       matches: [],
@@ -770,24 +795,25 @@ export function GameView({ gameId }: { gameId: string | null }) {
       createdByName: (creatorName ?? myInfo.name) || "-",
       createdByUid: creatorUid ?? null,
     };
-    saveGame(id, payload);
-    addGameToList(id);
-    if (creatorUid && isSyncAvailable()) {
-      addSharedGame(payload)
-        .then((newId) => {
-          if (newId) {
-            saveGame(id, { ...payload, shareId: newId });
-            setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId: newId }));
-            syncGameListToFirebase({ added: id });
-          }
-        })
-        .catch(() => {});
-    } else {
-      syncGameListToFirebase({ added: id });
-    }
-    setSelectedGameId(null);
-    setNavView("record");
-  }, [gameModeId, myProfileMemberId, members, myInfo.name, syncGameListToFirebase]);
+    addSharedGame(payload)
+      .then((newId) => {
+        if (newId) {
+          saveGame(id, { ...payload, shareId: newId });
+          addGameToList(id);
+          setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId: newId }));
+          syncGameListToFirebase({ added: id });
+          setSelectedGameId(null);
+          setNavView("record");
+        } else {
+          setShareToast("저장에 실패했습니다. 네트워크를 확인하세요.");
+          setTimeout(() => setShareToast(null), 3000);
+        }
+      })
+      .catch(() => {
+        setShareToast("저장에 실패했습니다. 네트워크를 확인하세요.");
+        setTimeout(() => setShareToast(null), 3000);
+      });
+  }, [gameModeId, myProfileMemberId, members, myInfo.name, myInfo.uid, syncGameListToFirebase]);
 
   const handleShareGame = useCallback(() => {
     if (effectiveGameId === null) return;
@@ -809,11 +835,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
     router.push(`/game/${id}`);
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, router]);
 
-  /** 목록 카드에서 해당 경기 삭제. 만든이(createdByUid 일치)만 가능. Firestore에 공유된 경기면 원격 문서도 삭제. */
+  /** 목록 카드에서 해당 경기 삭제. 오프라인 시 차단. Firestore에 공유된 경기면 원격 문서도 삭제. */
   const handleDeleteCard = useCallback((gameId: string) => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setShareToast("네트워크가 필요합니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
     const data = loadGame(gameId);
-    const uid = myInfo.uid ?? getCurrentUserUid();
-    if (!uid || !data.createdByUid || uid !== data.createdByUid) return;
     if (data.shareId && isSyncAvailable()) {
       deleteSharedGame(data.shareId).catch(() => {});
     }
@@ -821,48 +850,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
     syncGameListToFirebase({ removed: gameId, removedShareId: data.shareId ?? undefined });
     setSelectedGameId(null);
     setListMenuOpenId(null);
-  }, [syncGameListToFirebase, myInfo.uid]);
+  }, [syncGameListToFirebase]);
 
-  /** 목록 카드에서 해당 경기 복사: 경기 명단 단계까지만 복사, 경기 현황은 제외 → 복사 후 명단 재편집·경기 생성 가능 */
-  const handleCopyCard = useCallback((gameId: string) => {
-    const existing = loadGame(gameId);
-    const newId = createGameId();
-    const creatorUid = myInfo.uid ?? getCurrentUserUid();
-    const payload = buildGameDataPayload(existing, {
-      members: existing.members ?? [],
-      matches: [],
-      gameName: existing.gameName ?? undefined,
-      gameMode: existing.gameMode,
-      gameSettings: existing.gameSettings ?? { ...DEFAULT_GAME_SETTINGS },
-      myProfileMemberId: undefined,
-      playingMatchIds: [],
-      shareId: undefined,
-      createdAt: new Date().toISOString(),
-      createdBy: null,
-      createdByName: myInfo.name || "-",
-      createdByUid: creatorUid ?? null,
-    });
-    saveGame(newId, payload);
-    addGameToList(newId);
-    if (creatorUid && isSyncAvailable()) {
-      addSharedGame(payload)
-        .then((shareId) => {
-          if (shareId) {
-            saveGame(newId, { ...payload, shareId });
-            setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId }));
-            syncGameListToFirebase({ added: newId });
-          }
-        })
-        .catch(() => {});
-    } else {
-      syncGameListToFirebase({ added: newId });
-    }
-    setListMenuOpenId(null);
-    setSelectedGameId(null);
-  }, [myInfo.name, syncGameListToFirebase]);
-
-  /** 경기 목록 카드에서 공유: ensureFirebase()·getDb() 호출 후 Firestore sharedGames에 addDoc(신규) 또는 setDoc(기존), shareId 링크 복사 */
+  /** 경기 목록 카드에서 공유: ensureFirebase()·getDb() 호출 후 Firestore sharedGames에 addDoc(신규) 또는 setDoc(기존), shareId 링크 복사. 오프라인 시 차단. */
   const handleShareCard = useCallback(async (targetGameId: string) => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setShareToast("네트워크가 필요합니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
     const data = loadGame(targetGameId);
     await ensureFirebase();
     const db = getDb();
@@ -1555,6 +1551,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] max-w-md mx-auto flex flex-col">
+      {!isOnline && (
+        <div className="bg-amber-500 text-white text-center text-sm py-2 px-3" role="alert">
+          오프라인입니다. 네트워크가 필요합니다.
+        </div>
+      )}
       {/* 헤더 - Apple 스타일: 블러, 미니멀 */}
       <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-xl border-b border-[#e8e8ed] safe-area-pb">
         <div className="flex items-center gap-3 px-3 py-4">
@@ -1723,7 +1724,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <button
                       type="button"
                       onClick={addGameToRecord}
-                      disabled={gameModeId === "individual_b"}
+                      disabled={gameModeId === "individual_b" || !isOnline}
                       className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3] btn-tap"
                     >
                       아래 경기 방식으로 경기 목록에 추가
@@ -1889,8 +1890,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const waitingCount = total - completedCount - ongoingCount;
                 const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
                 const isMenuOpen = listMenuOpenId === id;
-                const currentUid = myInfo.uid ?? getCurrentUserUid();
-                const isCardCreator = Boolean(currentUid && data.createdByUid && currentUid === data.createdByUid);
                 const staggerClass = ["animate-stagger-1", "animate-stagger-2", "animate-stagger-3", "animate-stagger-4", "animate-stagger-5", "animate-stagger-6", "animate-stagger-7", "animate-stagger-8", "animate-stagger-9", "animate-stagger-10", "animate-stagger-11", "animate-stagger-12"][index % 12];
                 return (
                   <li key={id} className={`relative animate-fade-in-up ${staggerClass}`}>
@@ -1996,7 +1995,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         </div>
                       </div>
                     </div>
-                    {/* 카드별 ... 메뉴 (삭제·복사) */}
+                    {/* 카드별 ... 메뉴 (삭제·공유) */}
                     <div className="absolute top-1 right-1">
                       <button
                         type="button"
@@ -2011,21 +2010,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         <>
                           <div className="fixed inset-0 z-10" aria-hidden onClick={() => setListMenuOpenId(null)} />
                           <div className="absolute right-0 top-full mt-0.5 py-1 min-w-[100px] rounded-lg bg-white border border-slate-200 shadow-lg z-20">
-                            {isCardCreator && (
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDeleteCard(id); }}
                               className="w-full text-left px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-t-lg btn-tap"
                             >
                               삭제
-                            </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleCopyCard(id); }}
-                              className={`w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 btn-tap ${!isCardCreator ? "rounded-t-lg" : ""}`}
-                            >
-                              복사
                             </button>
                             <button
                               type="button"
@@ -2103,9 +2093,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   playingMatchIds: selectedPlayingMatchIds,
                 });
                 saveGame(effectiveGameId, payload);
-                uploadSharedGameIfNeeded(payload)
-                  .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
-                  .catch(() => {});
+                if (typeof navigator !== "undefined" && navigator.onLine) {
+                  uploadSharedGameIfNeeded(payload)
+                    .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
+                    .catch(() => {});
+                } else {
+                  setShareToast("저장되었습니다. 네트워크 연결 후 동기화됩니다.");
+                  setTimeout(() => setShareToast(null), 3000);
+                }
                 setRecordDetailClosing(true);
                 setTimeout(() => {
                   setSelectedGameId(null);
@@ -2755,6 +2750,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         sessionStorage.removeItem(LOGIN_GATE_KEY);
                         setLoginGatePassed(false);
                       }
+                      setPhoneStep("idle");
+                      setPhoneNumberInput("");
+                      setPhoneCodeInput("");
+                      setPhoneError("");
+                      phoneConfirmationResultRef.current = null;
                     }}
                     className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
                   >

@@ -31,7 +31,7 @@ function dedupeByShareId(entries: GameListEntry[]): GameListEntry[] {
   });
 }
 
-/** 서버 항목 → 로컬 id 해석 (shareId면 fetch 후 매핑, 중복 제거) */
+/** 서버 항목 → 로컬 id 해석 (shareId 있는 항목만. shareId 없으면 무시) */
 async function resolveToLocalEntries(entries: GameListEntry[]): Promise<GameListEntry[]> {
   const deduped = dedupeByShareId(entries);
   const result: GameListEntry[] = [];
@@ -48,14 +48,8 @@ async function resolveToLocalEntries(entries: GameListEntry[]): Promise<GameList
       if (seenLocalId.has(localId)) continue;
       seenLocalId.add(localId);
       result.push({ id: localId, shareId: e.shareId });
-    } else {
-      const game = loadGame(e.id);
-      if (!game) continue;
-      if (game.shareId && result.some((r) => r.shareId === game.shareId)) continue;
-      if (seenLocalId.has(e.id)) continue;
-      seenLocalId.add(e.id);
-      result.push(e);
     }
+    /* shareId 없는 항목(로컬 전용)은 목록에서 제외. 모든 경기는 서버에 둠. */
   }
   return result;
 }

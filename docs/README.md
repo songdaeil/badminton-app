@@ -17,7 +17,12 @@
 
 ## 1. 프로젝트 소개 및 실행
 
-배드민턴 경기 관리 앱(Next.js)입니다. 경기 방식 선택, 명단·대진 관리, 경기 결과 입력·랭킹, 로컬 저장, 공유 링크(Firestore), 이메일/전화번호 로그인·경기 목록·프로필 동기화를 지원합니다.
+배드민턴 경기 관리 앱(Next.js)입니다. 경기 방식 선택, 명단·대진 관리, 경기 결과 입력·랭킹, 공유 링크(Firestore), 이메일/전화번호 로그인·경기 목록·프로필 동기화를 지원합니다.
+
+**제품 방향**
+- **모든 경기는 서버(Firestore)에 저장**: 경기 생성/목록 추가 시 항상 Firestore(sharedGames)에 저장됩니다. 로컬 전용(shareId 없음) 경기는 없습니다.
+- **오프라인 동작 미지원**: 네트워크가 없으면 경기 생성·저장·공유·삭제 등 쓰기가 차단되며, "오프라인입니다. 네트워크가 필요합니다." 배너가 표시됩니다.
+- **로그인 필수**: 로그인 게이트 통과 후에만 경기 세팅·경기 목록·나의 정보 등 관련 기능을 사용할 수 있습니다.
 
 **기술 스택**: Next.js, React, TypeScript, Firebase (Auth, Firestore)
 
@@ -100,7 +105,7 @@ flowchart LR
 
 목록에서 경기를 선택하면 상세 화면(요약·명단·대진·경기 현황·랭킹)이 열리고, 점수 입력 후 저장합니다.
 
-- **만든이 권한**: 경기 요약(이름·날짜·시간·장소·승점)은 **만든이(createdByUid와 일치하는 사용자)만 수정 가능**합니다. **경기 카드 삭제**도 **만든이만 가능**하며, 목록 카드의 ⋯ 메뉴에서 삭제 버튼은 만든이에게만 노출됩니다.
+- **만든이 권한**: 경기 요약(이름·날짜·시간·장소·승점)은 **만든이(createdByUid와 일치하는 사용자)만 수정 가능**합니다.
 
 ```mermaid
 flowchart LR
@@ -311,14 +316,14 @@ flowchart LR
 
 ### 데이터 흐름 요약
 
-- **경기 데이터**: 로컬(game-storage) + 공유 시 Firestore(sync). 경기 상세는 subscribeSharedGame으로 실시간 반영.
+- **경기 데이터**: 모든 경기는 Firestore(sharedGames)에 저장됨. 로컬(game-storage)은 캐시·편집 중 state 용. 경기 상세는 subscribeSharedGame으로 실시간 반영. 오프라인 시 쓰기 차단.
 
 **코드·데이터 규칙**
 
 - **스토리지 키**: 모두 `badminton_*`(언더스코어)로 통일. `app/constants.ts`(LOGIN_GATE_KEY, PENDING_SHARE_KEY, PROFILE_UPLOADED_KEY 등), `lib/game-storage.ts`(badminton_local, badminton_myinfo, badminton_game_list), `app/components/PwaInstallPrompt.tsx`(badminton_pwa_prompt_dismissed). 기존 하이픈 키(badminton-game-list 등)는 로드 시 1회 마이그레이션으로 새 키로 복사 후 삭제.
 - **상수**: `app/constants.ts`에서만 정의하고, 페이지·컴포넌트는 import만 사용.
 - **공유 경기·페이로드·프로필**: Firestore 업로드는 `lib/sync.ts`의 `uploadSharedGameIfNeeded`, `shouldSkipSharedGameUpload` 사용. GameData 페이로드 생성은 `lib/game-storage.ts`의 `buildGameDataPayload`. 멤버에 내 프로필 반영은 `lib/match-stats.ts`의 `applyMyProfileToMembers` 사용.
-- **경기 목록**: 로컬 목록 + 로그인 시 userGameLists와 동기화(useGameListSync). 추가/삭제 시 원격과 병합 후 업로드.
+- **경기 목록**: 로그인 시 userGameLists·sharedGames 기준으로 목록 표시(useGameListSync). shareId 없는 항목은 목록에서 제외. 추가/삭제 시 원격 반영.
 - **프로필**: 로컬(myInfo) + 로그인 UID 기준 Firestore(profile-sync).
 
 ### 최적화 시 참고
