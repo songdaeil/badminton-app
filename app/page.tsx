@@ -194,6 +194,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
   const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
   const effectiveGameId = gameId ?? selectedGameId;
+  /** 경기 상세에서 경기 요약(이름/날짜/시간/장소/승점) 수정 가능 여부. 만든이(createdByUid 일치)만 true */
+  const isGameSummaryEditable = useMemo(() => {
+    if (effectiveGameId == null) return false;
+    const existing = loadGame(effectiveGameId);
+    const uid = myInfo.uid ?? getCurrentUserUid();
+    return Boolean(uid && existing.createdByUid && uid === existing.createdByUid);
+  }, [effectiveGameId, myInfo.uid]);
   const gameMode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
   /** 테이블 내 직접입력 행: 새 참가자 입력값 */
   const [newMemberName, setNewMemberName] = useState("");
@@ -698,9 +705,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const payload = buildGameDataPayload(existing, {
       members: membersToSave,
       matches,
-      gameName: gameName && gameName.trim() ? gameName.trim() : undefined,
+      gameName: isGameSummaryEditable ? (gameName && gameName.trim() ? gameName.trim() : undefined) : existing.gameName,
       gameMode: gameModeId,
-      gameSettings,
+      gameSettings: isGameSummaryEditable ? gameSettings : (existing.gameSettings ?? gameSettings),
       myProfileMemberId: myProfileMemberId ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
     });
@@ -743,7 +750,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         firestorePushTimeoutRef.current = null;
       }
     };
-  }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, myInfo.name, myInfo.gender, myInfo.grade, mounted]);
+  }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, myInfo.name, myInfo.gender, myInfo.grade, mounted, isGameSummaryEditable]);
 
 
   const addGameToRecord = useCallback(() => {
@@ -802,9 +809,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
     router.push(`/game/${id}`);
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, router]);
 
-  /** 목록 카드에서 해당 경기 삭제. Firestore에 공유된 경기면 원격 문서도 삭제. UID 기준 경기 목록 동기화에도 반영. */
+  /** 목록 카드에서 해당 경기 삭제. 만든이(createdByUid 일치)만 가능. Firestore에 공유된 경기면 원격 문서도 삭제. */
   const handleDeleteCard = useCallback((gameId: string) => {
     const data = loadGame(gameId);
+    const uid = myInfo.uid ?? getCurrentUserUid();
+    if (!uid || !data.createdByUid || uid !== data.createdByUid) return;
     if (data.shareId && isSyncAvailable()) {
       deleteSharedGame(data.shareId).catch(() => {});
     }
@@ -812,7 +821,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     syncGameListToFirebase({ removed: gameId, removedShareId: data.shareId ?? undefined });
     setSelectedGameId(null);
     setListMenuOpenId(null);
-  }, [syncGameListToFirebase]);
+  }, [syncGameListToFirebase, myInfo.uid]);
 
   /** 목록 카드에서 해당 경기 복사: 경기 명단 단계까지만 복사, 경기 현황은 제외 → 복사 후 명단 재편집·경기 생성 가능 */
   const handleCopyCard = useCallback((gameId: string) => {
@@ -1880,6 +1889,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const waitingCount = total - completedCount - ongoingCount;
                 const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
                 const isMenuOpen = listMenuOpenId === id;
+                const currentUid = myInfo.uid ?? getCurrentUserUid();
+                const isCardCreator = Boolean(currentUid && data.createdByUid && currentUid === data.createdByUid);
                 const staggerClass = ["animate-stagger-1", "animate-stagger-2", "animate-stagger-3", "animate-stagger-4", "animate-stagger-5", "animate-stagger-6", "animate-stagger-7", "animate-stagger-8", "animate-stagger-9", "animate-stagger-10", "animate-stagger-11", "animate-stagger-12"][index % 12];
                 return (
                   <li key={id} className={`relative animate-fade-in-up ${staggerClass}`}>
@@ -2000,6 +2011,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         <>
                           <div className="fixed inset-0 z-10" aria-hidden onClick={() => setListMenuOpenId(null)} />
                           <div className="absolute right-0 top-full mt-0.5 py-1 min-w-[100px] rounded-lg bg-white border border-slate-200 shadow-lg z-20">
+                            {isCardCreator && (
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDeleteCard(id); }}
@@ -2007,10 +2019,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             >
                               삭제
                             </button>
+                            )}
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleCopyCard(id); }}
-                              className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 btn-tap"
+                              className={`w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 btn-tap ${!isCardCreator ? "rounded-t-lg" : ""}`}
                             >
                               복사
                             </button>
@@ -2065,18 +2078,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   clearTimeout(saveResultFirestoreTimerRef.current);
                   saveResultFirestoreTimerRef.current = null;
                 }
-                /* 저장 버튼 연타 시 state가 아직 반영 전일 수 있으므로, 로컬에 마지막 저장된 데이터(loadGame) 기준으로 payload 구성 */
+                /* 저장 버튼 연타 시 state가 아직 반영 전일 수 있으므로, 로컬에 마지막 저장된 데이터(loadGame) 기준으로 payload 구성. 요약은 만든이만 반영 */
                 const existing = loadGame(effectiveGameId);
                 const gameNameEl = document.getElementById("game-name") as HTMLInputElement | null;
                 const gameDateEl = document.getElementById("game-date") as HTMLInputElement | null;
                 const gameTimeEl = document.getElementById("game-time") as HTMLSelectElement | null;
                 const gameLocationEl = document.getElementById("game-location") as HTMLInputElement | null;
                 const gameScoreLimitEl = document.getElementById("game-score-limit") as HTMLInputElement | null;
-                const gameNameToSave = gameNameEl?.value?.trim() || undefined;
-                const dateToSave = gameDateEl?.value?.trim() || gameSettings.date;
-                const timeToSave = (gameTimeEl?.value && TIME_OPTIONS_30MIN.includes(gameTimeEl.value)) ? gameTimeEl.value : gameSettings.time;
-                const locationToSave = gameLocationEl?.value?.trim() ?? gameSettings.location;
-                const scoreRaw = gameScoreLimitEl?.value != null ? parseInt(gameScoreLimitEl.value, 10) : gameSettings.scoreLimit;
+                const gameNameToSave = isGameSummaryEditable ? (gameNameEl?.value?.trim() || undefined) : existing.gameName;
+                const baseSettings = existing.gameSettings ?? gameSettings;
+                const dateToSave = isGameSummaryEditable ? (gameDateEl?.value?.trim() || gameSettings.date) : baseSettings.date;
+                const timeToSave = isGameSummaryEditable && gameTimeEl?.value && TIME_OPTIONS_30MIN.includes(gameTimeEl.value) ? gameTimeEl.value : baseSettings.time;
+                const locationToSave = isGameSummaryEditable ? (gameLocationEl?.value?.trim() ?? gameSettings.location) : baseSettings.location;
+                const scoreRaw = isGameSummaryEditable && gameScoreLimitEl?.value != null ? parseInt(gameScoreLimitEl.value, 10) : baseSettings.scoreLimit;
                 const scoreLimitToSave = Number.isNaN(scoreRaw) ? 21 : Math.max(1, Math.min(99, scoreRaw));
                 const membersToSave = applyMyProfileToMembers(existing.members ?? [], myProfileMemberId, myProfileForMembers);
                 const payload = buildGameDataPayload(existing, {
@@ -2084,7 +2098,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   matches: existing.matches ?? [],
                   gameName: gameNameToSave,
                   gameMode: gameModeId,
-                  gameSettings: { ...(existing.gameSettings ?? gameSettings), date: dateToSave, time: timeToSave, location: locationToSave, scoreLimit: scoreLimitToSave },
+                  gameSettings: { ...baseSettings, date: dateToSave, time: timeToSave, location: locationToSave, scoreLimit: scoreLimitToSave },
                   myProfileMemberId: myProfileMemberId ?? undefined,
                   playingMatchIds: selectedPlayingMatchIds,
                 });
@@ -2111,8 +2125,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
           {/* 경기 요약 카드 */}
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 card-app card-app-interactive">
-            <div className="px-4 py-0.5 border-b border-[#e8e8ed]">
+            <div className="px-4 py-0.5 border-b border-[#e8e8ed] flex items-center justify-between gap-2">
               <h3 className="text-base font-semibold text-slate-800 leading-tight">경기 요약</h3>
+              {!isGameSummaryEditable && <span className="text-xs text-slate-400">만든이만 수정 가능</span>}
             </div>
             <div className="px-4 py-0.5 space-y-px">
               <div className="flex items-center gap-0.5 py-0.5">
@@ -2125,7 +2140,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onFocus={() => { gameSummaryFocusedRef.current = true; }}
                   onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   placeholder="경기 이름 입력"
-                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  disabled={!isGameSummaryEditable}
+                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] disabled:opacity-70 disabled:cursor-not-allowed"
                   aria-label="경기 이름"
                 />
               </div>
@@ -2154,7 +2170,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onChange={(e) => setGameSettings((s) => ({ ...s, date: e.target.value }))}
                   onFocus={() => { gameSummaryFocusedRef.current = true; }}
                   onBlur={() => { gameSummaryFocusedRef.current = false; }}
-                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
+                  disabled={!isGameSummaryEditable}
+                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 disabled:opacity-70 disabled:cursor-not-allowed"
                   aria-label="날짜"
                 />
                 <select
@@ -2163,7 +2180,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onChange={(e) => setGameSettings((s) => ({ ...s, time: e.target.value }))}
                   onFocus={() => { gameSummaryFocusedRef.current = true; }}
                   onBlur={() => { gameSummaryFocusedRef.current = false; }}
-                  className="w-24 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400"
+                  disabled={!isGameSummaryEditable}
+                  className="w-24 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 disabled:opacity-70 disabled:cursor-not-allowed"
                   aria-label="시작 시간 (30분 단위)"
                 >
                   {TIME_OPTIONS_30MIN.map((t) => (
@@ -2183,7 +2201,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onFocus={() => { gameSummaryFocusedRef.current = true; }}
                   onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   placeholder="장소 입력"
-                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  disabled={!isGameSummaryEditable}
+                  className="flex-1 min-w-0 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] disabled:opacity-70 disabled:cursor-not-allowed"
                   aria-label="장소"
                 />
               </div>
@@ -2207,7 +2226,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onFocus={() => { gameSummaryFocusedRef.current = true; }}
                   onBlur={() => { gameSummaryFocusedRef.current = false; }}
                   placeholder="21"
-                  className="flex-1 min-w-0 w-20 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  disabled={!isGameSummaryEditable}
+                  className="flex-1 min-w-0 w-20 px-2 py-0.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] focus:border-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-70 disabled:cursor-not-allowed"
                   aria-label="한 경기당 득점 제한 (직접 입력)"
                 />
                 <span className="text-xs text-slate-500 shrink-0">점</span>
