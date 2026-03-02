@@ -376,16 +376,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
   }, [effectiveGameId]);
 
-  /** 공유 경기 로드 후 해당 경기 상세로 진입 (목록 추가·URL 정리). 게이트 통과는 호출 쪽에서 처리 */
+  /** 공유 경기 로드 후 해당 경기 상세로 진입 (보기만, 목록에는 추가하지 않음). 이미 내 목록에 있으면 그 경기로 이동. 게이트 통과는 호출 쪽에서 처리 */
   const processShareAndOpenDetail = useCallback(
     (share: string) => {
       const existingIds = loadGameList();
-      const alreadyImportedId = existingIds.find(
+      const alreadyInListId = existingIds.find(
         (id) => loadGame(id).shareId === share || loadGame(id).importedFromShare === share
       );
-      if (alreadyImportedId != null) {
+      if (alreadyInListId != null) {
         setNavView("record");
-        setSelectedGameId(alreadyImportedId);
+        setSelectedGameId(alreadyInListId);
         router.replace("/?view=record", { scroll: false });
         return;
       }
@@ -397,8 +397,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
             playingMatchIds: data.playingMatchIds ?? [],
             shareId: share,
           });
-          addGameToList(newId);
-          syncGameListToFirebase({ added: newId });
           setNavView("record");
           setSelectedGameId(newId);
           router.replace("/?view=record", { scroll: false });
@@ -420,8 +418,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
           playingMatchIds: [],
           importedFromShare: share,
         });
-        addGameToList(newId);
-        syncGameListToFirebase({ added: newId });
         setNavView("record");
         setSelectedGameId(newId);
         router.replace("/?view=record", { scroll: false });
@@ -441,14 +437,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
           playingMatchIds: [],
           importedFromShare: share,
         });
-        addGameToList(newId);
-        syncGameListToFirebase({ added: newId });
         setNavView("record");
         setSelectedGameId(newId);
         router.replace("/?view=record", { scroll: false });
       });
     },
-    [router, syncGameListToFirebase]
+    [router]
   );
 
   /** 공유 링크(?share=...) 진입: 로그인 안 됐으면 share만 보관 후 로그인 유도. 로그인됐으면 경기 로드 후 상세 진입 */
