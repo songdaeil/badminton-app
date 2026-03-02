@@ -23,6 +23,7 @@ export function PwaInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<{ prompt: () => Promise<{ outcome: string }> } | null>(null);
   const [showBanner, setShowBanner] = useState(false);
   const [showIosModal, setShowIosModal] = useState(false);
+  const [showManualModal, setShowManualModal] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -65,6 +66,8 @@ export function PwaInstallPrompt() {
     }
     if (isIos()) {
       setShowIosModal(true);
+    } else {
+      setShowManualModal(true);
     }
   }, [deferredPrompt]);
 
@@ -76,8 +79,9 @@ export function PwaInstallPrompt() {
   }, []);
 
   const closeIosModal = useCallback(() => setShowIosModal(false), []);
+  const closeManualModal = useCallback(() => setShowManualModal(false), []);
 
-  if (!showBanner && !showIosModal) return null;
+  if (!showBanner && !showIosModal && !showManualModal) return null;
 
   return (
     <>
@@ -132,6 +136,37 @@ export function PwaInstallPrompt() {
             <button
               type="button"
               onClick={closeIosModal}
+              className="w-full py-2.5 rounded-xl font-medium bg-[#0071e3] text-white"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showManualModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center p-4 bg-black/50 animate-fade-in"
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="pwa-manual-title"
+        >
+          <div className="w-full max-w-sm rounded-t-2xl bg-white shadow-xl p-4 pb-8 safe-area-pb animate-slide-up">
+            <h2 id="pwa-manual-title" className="text-base font-semibold text-slate-800 mb-2">
+              앱으로 설치하기
+            </h2>
+            <p className="text-sm text-slate-600 mb-3">
+              <strong>Chrome</strong>: 주소창 오른쪽의 <strong>⊕ 설치</strong> 아이콘을 누르거나, 메뉴(⋮) → <strong>앱 설치</strong> / <strong>홈 화면에 추가</strong>를 선택하세요.
+            </p>
+            <p className="text-sm text-slate-600 mb-4">
+              <strong>Edge</strong>: 주소창 옆 <strong>⊕</strong> 또는 메뉴 → <strong>앱</strong> → 이 사이트를 앱으로 설치하세요.
+            </p>
+            <p className="text-xs text-slate-500 mb-4">
+              HTTPS로 배포된 사이트에서만 설치 버튼이 보일 수 있습니다.
+            </p>
+            <button
+              type="button"
+              onClick={closeManualModal}
               className="w-full py-2.5 rounded-xl font-medium bg-[#0071e3] text-white"
             >
               확인
