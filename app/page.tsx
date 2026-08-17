@@ -181,6 +181,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
     authUid,
     useCallback(() => setListRefreshKey((k) => k + 1), [])
   );
+  const enrollGameInMyList = useCallback((localId: string) => {
+    addGameToList(localId);
+    bumpApplyGeneration();
+    refreshListDisplay();
+    syncGameListToFirebase({ added: localId });
+  }, [bumpApplyGeneration, refreshListDisplay, syncGameListToFirebase]);
   /** 경기 목록 상세·프로필 수정 등 섹션 하위 오버레이 열림 시 true → 캐러셀 스와이프 무시 */
   const overlayOpenRef = useRef(false);
   /** 오버레이(도움말·확인 모달) 스와이프 제스처용 */
@@ -376,7 +382,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
   }, [effectiveGameId]);
 
-  /** 공유 경기 로드 후 해당 경기 상세로 진입 (보기만, 목록에는 추가하지 않음). 이미 내 목록에 있으면 그 경기로 이동. 게이트 통과는 호출 쪽에서 처리 */
+  /** 공유 경기 로드 후 상세 진입하고 내 목록(참여 경기)에 등록. 이미 내 목록에 있으면 그 경기로 이동. */
   const processShareAndOpenDetail = useCallback(
     (share: string) => {
       const existingIds = loadGameList();
@@ -387,8 +393,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setNavView("record");
         setSelectedGameId(alreadyInListId);
         router.replace("/?view=record", { scroll: false });
+        enrollGameInMyList(alreadyInListId);
         return;
       }
+      const openAndEnroll = (newId: string) => {
+        enrollGameInMyList(newId);
+        setNavView("record");
+        setSelectedGameId(newId);
+        router.replace("/?view=record", { scroll: false });
+      };
       getSharedGame(share).then((data) => {
         if (data) {
           const newId = createGameId();
@@ -397,9 +410,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             playingMatchIds: data.playingMatchIds ?? [],
             shareId: share,
           });
-          setNavView("record");
-          setSelectedGameId(newId);
-          router.replace("/?view=record", { scroll: false });
+          openAndEnroll(newId);
           return;
         }
         const fallback = decodeGameFromShare(share);
@@ -418,9 +429,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           playingMatchIds: [],
           importedFromShare: share,
         });
-        setNavView("record");
-        setSelectedGameId(newId);
-        router.replace("/?view=record", { scroll: false });
+        openAndEnroll(newId);
       }).catch(() => {
         const data = decodeGameFromShare(share);
         if (!data) return;
@@ -437,12 +446,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
           playingMatchIds: [],
           importedFromShare: share,
         });
-        setNavView("record");
-        setSelectedGameId(newId);
-        router.replace("/?view=record", { scroll: false });
+        openAndEnroll(newId);
       });
     },
-    [router]
+    [router, enrollGameInMyList]
   );
 
   /** 공유 링크(?share=...) 진입: 로그인 안 됐으면 share만 보관 후 로그인 유도. 로그인됐으면 경기 로드 후 상세 진입 */
@@ -828,7 +835,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     router.push(`/game/${id}`);
   }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, router]);
 
-  /** 목록 카드에서 해당 경기 삭제. 오프라인 시 차단. Firestore에 공유된 경기면 원격 문서도 삭제. */
+  /** 목록 카드에서 해당 경기 삭제. 만든이만 Firestore 원본을 지운다. 참여자는 내 목록에서만 제거. */
   const handleDeleteCard = useCallback((gameId: string) => {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       setShareToast("네트워크가 필요합니다.");
@@ -836,14 +843,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
       return;
     }
     const data = loadGame(gameId);
-    if (data.shareId && isSyncAvailable()) {
+    const uid = myInfo.uid ?? getCurrentUserUid();
+    const isOwner = Boolean(uid && data.createdByUid && uid === data.createdByUid);
+    if (data.shareId && isSyncAvailable() && isOwner) {
       deleteSharedGame(data.shareId).catch(() => {});
     }
     removeGameFromList(gameId);
     syncGameListToFirebase({ removed: gameId, removedShareId: data.shareId ?? undefined });
     setSelectedGameId(null);
     setListMenuOpenId(null);
-  }, [syncGameListToFirebase]);
+  }, [syncGameListToFirebase, myInfo.uid]);
 
   /** 경기 목록 카드에서 공유: ensureFirebase()·getDb() 호출 후 Firestore sharedGames에 addDoc(신규) 또는 setDoc(기존), shareId 링크 복사. 오프라인 시 차단. */
   const handleShareCard = useCallback(async (targetGameId: string) => {
@@ -1947,7 +1956,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             return null;
                           })()}
                           <p className="text-fluid-sm text-slate-500 leading-tight">
-                            만든 이: {creatorDisplay}{dateStr ? ` ${dateStr}` : ""}
+                            {(() => {
+                              const uid = myInfo.uid ?? getCurrentUserUid();
+                              const madeByMe = Boolean(uid && data.createdByUid && data.createdByUid === uid);
+                              return (
+                                <>
+                                  <span className={`mr-1.5 text-[10px] font-medium px-1.5 py-0 rounded-full leading-none ${madeByMe ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"}`}>
+                                    {madeByMe ? "내가 만든 경기" : "참여한 경기"}
+                                  </span>
+                                  만든 이: {creatorDisplay}{dateStr ? ` ${dateStr}` : ""}
+                                </>
+                              );
+                            })()}
                           </p>
                         {/* 신청·생성·진행·종료 뱃지 + 총/종료/진행/대기 테이블 (경기 요약 하단, 전체 너비) */}
                         <div className="w-full flex flex-col gap-0.5 pt-1">
@@ -2008,7 +2028,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               onClick={(e) => { e.stopPropagation(); handleDeleteCard(id); }}
                               className="w-full text-left px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-t-lg btn-tap"
                             >
-                              삭제
+                              {Boolean((myInfo.uid ?? getCurrentUserUid()) && data.createdByUid && (myInfo.uid ?? getCurrentUserUid()) === data.createdByUid)
+                                ? "삭제"
+                                : "목록에서 빼기"}
                             </button>
                             <button
                               type="button"
@@ -2354,10 +2376,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   }
                   addMemberAsMe(name, myInfo.gender ?? "M", myInfo.grade ?? "D");
                   if (effectiveGameId != null && !loadGameList().includes(effectiveGameId)) {
-                    bumpApplyGeneration();
-                    addGameToList(effectiveGameId);
-                    refreshListDisplay();
-                    syncGameListToFirebase({ added: effectiveGameId });
+                    enrollGameInMyList(effectiveGameId);
                   }
                 }}
                 className="w-full py-2 rounded-xl text-sm font-medium text-[#0071e3] bg-[#0071e3]/10 hover:bg-[#0071e3]/20 transition-colors btn-tap mb-2"

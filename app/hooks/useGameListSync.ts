@@ -70,20 +70,33 @@ export function useGameListSync(
   currentAuthUidRef.current = authUid;
   const applyGenerationRef = useRef(0);
 
-  /** 해석된 목록을 로컬에 저장하고, 공유 경기만 실시간 구독 */
+  /** 해석된 목록을 로컬에 저장하고, 공유 경기만 실시간 구독. 로컬에만 있는 참여 경기도 유지. */
   const applyResolvedList = useCallback(
     (resolved: GameListEntry[]) => {
       const localIdsBefore = loadGameList();
-      const resolvedShareIds = new Set(resolved.map((e) => e.shareId).filter((s): s is string => !!s));
-      const toSubscribe: GameListEntry[] = [...resolved];
+      const byShare = new Map<string, GameListEntry>();
+      const noShare: GameListEntry[] = [];
+      for (const e of resolved) {
+        if (e.shareId) byShare.set(e.shareId, e);
+        else noShare.push(e);
+      }
       for (const id of localIdsBefore) {
         const shareId = loadGame(id)?.shareId;
-        if (shareId && !resolvedShareIds.has(shareId)) {
-          resolvedShareIds.add(shareId);
-          toSubscribe.push({ id, shareId });
+        if (shareId && !byShare.has(shareId)) {
+          byShare.set(shareId, { id, shareId });
         }
       }
-      saveGameList(resolved.map((e) => e.id));
+      const merged = [...noShare, ...byShare.values()];
+      const seenLocal = new Set<string>();
+      const toSubscribe: GameListEntry[] = [];
+      const listIds: string[] = [];
+      for (const e of merged) {
+        if (seenLocal.has(e.id)) continue;
+        seenLocal.add(e.id);
+        listIds.push(e.id);
+        toSubscribe.push(e);
+      }
+      saveGameList(listIds);
       onListChange();
       unsubSharedRef.current.forEach((u) => u());
       unsubSharedRef.current = [];
@@ -105,7 +118,6 @@ export function useGameListSync(
       resolveToLocalEntries(entries)
         .then((resolved) => {
           if (currentAuthUidRef.current !== forUid) return;
-          if (resolved.length === 0 && forUid) setUserGameList(forUid, []).catch(() => {});
           applyResolvedList(resolved);
         })
         .catch(() => {});

@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local simulation artifacts (screenshots, emails)
+/docs/sim-run/
+
 # vercel
 .vercel
 

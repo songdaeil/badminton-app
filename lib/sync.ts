@@ -15,6 +15,7 @@ import {
   where,
 } from "firebase/firestore";
 import type { GameData } from "@/lib/game-storage";
+import type { Match, Member } from "@/app/types";
 import { ensureFirebase, getDb } from "@/lib/firebase";
 
 const COLLECTION = "sharedGames";
@@ -38,6 +39,74 @@ export function getFirestorePayloadSize(data: GameData): number {
   const doc = { gameData: toStoredData(data), updatedAt: null };
   const json = JSON.stringify(doc);
   return new TextEncoder().encode(json).length;
+}
+
+function matchHasScore(m: Match): boolean {
+  return m.score1 != null || m.score2 != null;
+}
+
+function pickMatch(remote: Match | undefined, local: Match | undefined): Match | undefined {
+  if (!remote) return local;
+  if (!local) return remote;
+  const remoteSaved = matchHasScore(remote);
+  const localSaved = matchHasScore(local);
+  if (localSaved && !remoteSaved) return local;
+  if (remoteSaved && !localSaved) return remote;
+  if (localSaved && remoteSaved) {
+    const lt = local.savedAt ?? "";
+    const rt = remote.savedAt ?? "";
+    return lt >= rt ? local : remote;
+  }
+  return local;
+}
+
+/** 동시 저장 시 매치·명단을 합친다. 점수는 savedAt이 더 늦은 쪽을 쓴다. */
+export function mergeGameData(remote: GameData, local: GameData): GameData {
+  const byId = new Map<string, Match>();
+  for (const m of remote.matches ?? []) byId.set(m.id, m);
+  for (const m of local.matches ?? []) {
+    const picked = pickMatch(byId.get(m.id), m);
+    if (picked) byId.set(m.id, picked);
+  }
+  const orderSrc =
+    (local.matches?.length ?? 0) >= (remote.matches?.length ?? 0) ? local.matches ?? [] : remote.matches ?? [];
+  const matches: Match[] = [];
+  const seen = new Set<string>();
+  for (const m of orderSrc) {
+    const picked = byId.get(m.id) ?? m;
+    matches.push(picked);
+    seen.add(m.id);
+  }
+  for (const m of byId.values()) {
+    if (!seen.has(m.id)) matches.push(m);
+  }
+
+  const memberMap = new Map<string, Member>();
+  for (const m of remote.members ?? []) memberMap.set(m.id, m);
+  for (const m of local.members ?? []) {
+    const prev = memberMap.get(m.id);
+    memberMap.set(m.id, prev ? { ...prev, ...m, linkedUid: m.linkedUid ?? prev.linkedUid } : m);
+  }
+
+  const scoredIds = new Set(matches.filter(matchHasScore).map((m) => m.id));
+  const playing = [...new Set([...(remote.playingMatchIds ?? []), ...(local.playingMatchIds ?? [])])].filter(
+    (id) => !scoredIds.has(id)
+  );
+
+  return {
+    ...remote,
+    ...local,
+    members: Array.from(memberMap.values()),
+    matches,
+    playingMatchIds: playing,
+    createdAt: remote.createdAt ?? local.createdAt,
+    createdBy: remote.createdBy ?? local.createdBy,
+    createdByName: remote.createdByName ?? local.createdByName,
+    createdByUid: remote.createdByUid ?? local.createdByUid,
+    shareId: local.shareId ?? remote.shareId,
+    gameName: (local.gameName && local.gameName.trim()) ? local.gameName : remote.gameName,
+    gameSettings: local.gameSettings ?? remote.gameSettings,
+  };
 }
 
 function fromStored(shareId: string, raw: unknown): GameData | null {
@@ -98,16 +167,24 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
   const db = getDb();
   if (!ok || !db) return false;
   try {
-    const payload = toStoredData(data);
-    const size = getFirestorePayloadSize(data);
-    if (typeof process !== "undefined" && process.env.NODE_ENV === "development") {
-      console.log("[Firebase] 업로드 용량:", size, "bytes", `(${(size / 1024).toFixed(2)} KB)`);
-    }
     const ref = doc(db, COLLECTION, shareId);
-    await setDoc(ref, {
-      gameData: payload,
-      updatedAt: serverTimestamp(),
-      createdByUid: data.createdByUid ?? null,
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(ref);
+      let merged: GameData = data;
+      if (snap.exists()) {
+        const remote = fromStored(shareId, snap.data()?.gameData);
+        if (remote) merged = mergeGameData(remote, data);
+      }
+      const payload = toStoredData(merged);
+      const size = getFirestorePayloadSize(merged);
+      if (typeof process !== "undefined" && process.env.NODE_ENV === "development") {
+        console.log("[Firebase] 업로드 용량:", size, "bytes", `(${(size / 1024).toFixed(2)} KB)`);
+      }
+      transaction.set(ref, {
+        gameData: payload,
+        updatedAt: serverTimestamp(),
+        createdByUid: merged.createdByUid ?? data.createdByUid ?? snap.data()?.createdByUid ?? null,
+      });
     });
     return true;
   } catch (e) {
@@ -304,7 +381,6 @@ export function subscribeUserGameList(
       ref,
       (snap) => {
         if (!snap.exists()) {
-          onData([]);
           return;
         }
         const list = snap.data()?.list;
