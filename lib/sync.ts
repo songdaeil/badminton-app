@@ -15,8 +15,8 @@ import {
   where,
 } from "firebase/firestore";
 import type { GameData } from "@/lib/game-storage";
-import type { Match, Member } from "@/app/types";
-import { ensureFirebase, getDb } from "@/lib/firebase";
+import type { Match, Member, SavedRecord } from "@/app/types";
+import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
 
 const COLLECTION = "sharedGames";
 const USER_GAME_LIST_COLLECTION = "userGameLists";
@@ -45,48 +45,99 @@ function matchHasScore(m: Match): boolean {
   return m.score1 != null || m.score2 != null;
 }
 
+function mergeSavedHistory(a?: SavedRecord[], b?: SavedRecord[]): SavedRecord[] {
+  const all = [...(a ?? []), ...(b ?? [])];
+  const seen = new Set<string>();
+  const out: SavedRecord[] = [];
+  for (const r of all) {
+    if (!r?.at) continue;
+    const key = `${r.at}|${r.by ?? ""}|${r.savedByName ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  out.sort((x, y) => (x.at ?? "").localeCompare(y.at ?? ""));
+  return out;
+}
+
 function pickMatch(remote: Match | undefined, local: Match | undefined): Match | undefined {
   if (!remote) return local;
   if (!local) return remote;
   const remoteSaved = matchHasScore(remote);
   const localSaved = matchHasScore(local);
-  if (localSaved && !remoteSaved) return local;
-  if (remoteSaved && !localSaved) return remote;
-  if (localSaved && remoteSaved) {
+  let winner: Match;
+  if (localSaved && !remoteSaved) winner = local;
+  else if (remoteSaved && !localSaved) winner = remote;
+  else if (localSaved && remoteSaved) {
     const lt = local.savedAt ?? "";
     const rt = remote.savedAt ?? "";
-    return lt >= rt ? local : remote;
+    winner = lt >= rt ? local : remote;
+  } else {
+    winner = local;
   }
-  return local;
+  return { ...winner, savedHistory: mergeSavedHistory(remote.savedHistory, local.savedHistory) };
 }
 
-/** 동시 저장 시 매치·명단을 합친다. 점수는 savedAt이 더 늦은 쪽을 쓴다. */
-export function mergeGameData(remote: GameData, local: GameData): GameData {
+function mergeMatches(remote: Match[], local: Match[], isOwner: boolean): Match[] {
+  const remoteIds = new Set(remote.map((m) => m.id));
+  let overlap = 0;
+  for (const m of local) if (remoteIds.has(m.id)) overlap += 1;
+  if (isOwner && local.length > 0 && remote.length > 0 && overlap === 0) {
+    return local;
+  }
+  if (!isOwner) {
+    return remote.map((rm) => pickMatch(rm, local.find((lm) => lm.id === rm.id)) ?? rm);
+  }
   const byId = new Map<string, Match>();
-  for (const m of remote.matches ?? []) byId.set(m.id, m);
-  for (const m of local.matches ?? []) {
+  for (const m of remote) byId.set(m.id, m);
+  for (const m of local) {
     const picked = pickMatch(byId.get(m.id), m);
     if (picked) byId.set(m.id, picked);
   }
-  const orderSrc =
-    (local.matches?.length ?? 0) >= (remote.matches?.length ?? 0) ? local.matches ?? [] : remote.matches ?? [];
+  const orderSrc = local.length >= remote.length ? local : remote;
   const matches: Match[] = [];
   const seen = new Set<string>();
   for (const m of orderSrc) {
-    const picked = byId.get(m.id) ?? m;
-    matches.push(picked);
+    matches.push(byId.get(m.id) ?? m);
     seen.add(m.id);
   }
   for (const m of byId.values()) {
     if (!seen.has(m.id)) matches.push(m);
   }
+  return matches;
+}
 
-  const memberMap = new Map<string, Member>();
-  for (const m of remote.members ?? []) memberMap.set(m.id, m);
-  for (const m of local.members ?? []) {
-    const prev = memberMap.get(m.id);
-    memberMap.set(m.id, prev ? { ...prev, ...m, linkedUid: m.linkedUid ?? prev.linkedUid } : m);
+function mergeMembers(remote: Member[], local: Member[], isOwner: boolean, editorUid?: string | null): Member[] {
+  if (isOwner) {
+    const remoteById = new Map(remote.map((m) => [m.id, m]));
+    return local.map((lm) => {
+      const rm = remoteById.get(lm.id);
+      return rm ? { ...rm, ...lm, linkedUid: lm.linkedUid ?? rm.linkedUid } : lm;
+    });
   }
+  const result = [...remote];
+  if (!editorUid) return result;
+  const localSelf = local.filter((m) => m.linkedUid === editorUid);
+  if (localSelf.length === 0) {
+    return result.filter((m) => m.linkedUid !== editorUid);
+  }
+  for (const self of localSelf) {
+    const idx = result.findIndex((m) => m.id === self.id || m.linkedUid === editorUid);
+    if (idx >= 0) {
+      result[idx] = { ...result[idx], ...self, linkedUid: editorUid };
+    } else {
+      result.push(self);
+    }
+  }
+  return result;
+}
+
+/** 동시 저장 시 매치 점수는 savedAt이 늦은 쪽. 요약·대진 구조는 만든이만, 참여자는 본인 명단·점수만 반영. */
+export function mergeGameData(remote: GameData, local: GameData, editorUid?: string | null): GameData {
+  const ownerUid = remote.createdByUid ?? local.createdByUid;
+  const isOwner = Boolean(editorUid && ownerUid && editorUid === ownerUid);
+  const matches = mergeMatches(remote.matches ?? [], local.matches ?? [], isOwner);
+  const members = mergeMembers(remote.members ?? [], local.members ?? [], isOwner, editorUid);
 
   const scoredIds = new Set(matches.filter(matchHasScore).map((m) => m.id));
   const playing = [...new Set([...(remote.playingMatchIds ?? []), ...(local.playingMatchIds ?? [])])].filter(
@@ -95,8 +146,7 @@ export function mergeGameData(remote: GameData, local: GameData): GameData {
 
   return {
     ...remote,
-    ...local,
-    members: Array.from(memberMap.values()),
+    members,
     matches,
     playingMatchIds: playing,
     createdAt: remote.createdAt ?? local.createdAt,
@@ -104,8 +154,10 @@ export function mergeGameData(remote: GameData, local: GameData): GameData {
     createdByName: remote.createdByName ?? local.createdByName,
     createdByUid: remote.createdByUid ?? local.createdByUid,
     shareId: local.shareId ?? remote.shareId,
-    gameName: (local.gameName && local.gameName.trim()) ? local.gameName : remote.gameName,
-    gameSettings: local.gameSettings ?? remote.gameSettings,
+    gameName: isOwner && local.gameName?.trim() ? local.gameName : remote.gameName,
+    gameMode: isOwner ? (local.gameMode ?? remote.gameMode) : remote.gameMode,
+    gameSettings: isOwner ? (local.gameSettings ?? remote.gameSettings) : remote.gameSettings,
+    myProfileMemberId: isOwner ? (local.myProfileMemberId ?? remote.myProfileMemberId) : remote.myProfileMemberId,
   };
 }
 
@@ -173,7 +225,8 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
       let merged: GameData = data;
       if (snap.exists()) {
         const remote = fromStored(shareId, snap.data()?.gameData);
-        if (remote) merged = mergeGameData(remote, data);
+        const editorUid = getAuthInstance()?.currentUser?.uid ?? null;
+        if (remote) merged = mergeGameData(remote, data, editorUid);
       }
       const payload = toStoredData(merged);
       const size = getFirestorePayloadSize(merged);
@@ -404,11 +457,12 @@ export function subscribeUserGameList(
   }
 }
 
-/** 구독 해제 함수 */
+/** 구독 해제 함수. 문서가 삭제되면 onDeleted를 한 번 호출한다. */
 export function subscribeSharedGame(
   shareId: string,
   onData: (data: GameData) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onDeleted?: () => void
 ): (() => void) | null {
   const db = getDb();
   if (!db) return null;
@@ -417,7 +471,10 @@ export function subscribeSharedGame(
     const unsub = onSnapshot(
       ref,
       (snap) => {
-        if (!snap.exists()) return;
+        if (!snap.exists()) {
+          onDeleted?.();
+          return;
+        }
         const gameData = fromStored(shareId, snap.data()?.gameData);
         if (gameData) onData(gameData);
       },

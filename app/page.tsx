@@ -202,13 +202,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 방금 Firestore에 업로드한 용량(바이트). 공유 경기 열람 시 표시 */
   const [lastFirestoreUploadBytes, setLastFirestoreUploadBytes] = useState<number | null>(null);
   const effectiveGameId = gameId ?? selectedGameId;
-  /** 경기 상세에서 경기 요약(이름/날짜/시간/장소/승점) 수정 가능 여부. 만든이(createdByUid 일치)만 true */
-  const isGameSummaryEditable = useMemo(() => {
+  /** 경기 상세에서 만든이(createdByUid 일치)만 요약·명단 수정·대진 생성 가능 */
+  const isGameOwner = useMemo(() => {
     if (effectiveGameId == null) return false;
     const existing = loadGame(effectiveGameId);
     const uid = myInfo.uid ?? getCurrentUserUid();
     return Boolean(uid && existing.createdByUid && uid === existing.createdByUid);
   }, [effectiveGameId, myInfo.uid]);
+  const isGameSummaryEditable = isGameOwner;
+  const isOnRoster = useMemo(() => {
+    const uid = myInfo.uid ?? getCurrentUserUid();
+    return Boolean(uid && members.some((m) => m.linkedUid === uid));
+  }, [members, myInfo.uid]);
+  const canRecordScores = isGameOwner || isOnRoster;
   const gameMode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
   /** 테이블 내 직접입력 행: 새 참가자 입력값 */
   const [newMemberName, setNewMemberName] = useState("");
@@ -322,7 +328,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
     let unsub: (() => void) | null = null;
     ensureFirebase().then(() => {
       if (!isSyncAvailable()) return;
-      unsub = subscribeSharedGame(shareId, (remote) => {
+      unsub = subscribeSharedGame(
+        shareId,
+        (remote) => {
       const avoidOverwriteMs = 2500;
       if (sharedGameLoadDoneAtRef.current > 0 && Date.now() - sharedGameLoadDoneAtRef.current < avoidOverwriteMs) return;
       const remoteMatchCount = remote.matches?.length ?? 0;
@@ -375,33 +383,42 @@ export function GameView({ gameId }: { gameId: string | null }) {
         const validPlayingIds = (remote.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
         setSelectedPlayingMatchIds(validPlayingIds);
       }
-    });
+        },
+        undefined,
+        () => {
+          removeGameFromList(effectiveGameId);
+          syncGameListToFirebase({ removed: effectiveGameId, removedShareId: shareId });
+          setSelectedGameId(null);
+          setShareToast("만든이가 경기를 삭제했습니다.");
+          setTimeout(() => setShareToast(null), 3000);
+        }
+      );
     });
     return () => {
       unsub?.();
     };
-  }, [effectiveGameId]);
+  }, [effectiveGameId, syncGameListToFirebase]);
 
-  /** 공유 경기 로드 후 상세 진입하고 내 목록(참여 경기)에 등록. 이미 내 목록에 있으면 그 경기로 이동. */
+  /** 공유 링크는 상세만 연다. 목록 등록은 만든이이거나 명단에 나 추가한 뒤에만. */
   const processShareAndOpenDetail = useCallback(
     (share: string) => {
       const existingIds = loadGameList();
       const alreadyInListId = existingIds.find(
         (id) => loadGame(id).shareId === share || loadGame(id).importedFromShare === share
       );
-      if (alreadyInListId != null) {
+      const uid = myInfo.uid ?? getCurrentUserUid();
+      const openDetail = (localId: string, createdByUid?: string | null) => {
+        if (uid && createdByUid && uid === createdByUid) {
+          enrollGameInMyList(localId);
+        }
         setNavView("record");
-        setSelectedGameId(alreadyInListId);
-        router.replace("/?view=record", { scroll: false });
-        enrollGameInMyList(alreadyInListId);
-        return;
-      }
-      const openAndEnroll = (newId: string) => {
-        enrollGameInMyList(newId);
-        setNavView("record");
-        setSelectedGameId(newId);
+        setSelectedGameId(localId);
         router.replace("/?view=record", { scroll: false });
       };
+      if (alreadyInListId != null) {
+        openDetail(alreadyInListId, loadGame(alreadyInListId).createdByUid);
+        return;
+      }
       getSharedGame(share).then((data) => {
         if (data) {
           const newId = createGameId();
@@ -410,7 +427,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             playingMatchIds: data.playingMatchIds ?? [],
             shareId: share,
           });
-          openAndEnroll(newId);
+          openDetail(newId, data.createdByUid);
           return;
         }
         const fallback = decodeGameFromShare(share);
@@ -429,7 +446,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           playingMatchIds: [],
           importedFromShare: share,
         });
-        openAndEnroll(newId);
+        openDetail(newId, merged.createdByUid);
       }).catch(() => {
         const data = decodeGameFromShare(share);
         if (!data) return;
@@ -446,26 +463,22 @@ export function GameView({ gameId }: { gameId: string | null }) {
           playingMatchIds: [],
           importedFromShare: share,
         });
-        openAndEnroll(newId);
+        openDetail(newId, data.createdByUid);
       });
     },
-    [router, enrollGameInMyList]
+    [router, enrollGameInMyList, myInfo.uid]
   );
 
-  /** 공유 링크(?share=...) 진입: 로그인 안 됐으면 share만 보관 후 로그인 유도. 로그인됐으면 경기 로드 후 상세 진입 */
+  /** 공유 링크(?share=...): 로그인·프로필이 끝날 때까지 share만 보관 */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const share = searchParams.get("share");
     if (!share) return;
-    if (!authUid) {
-      sessionStorage.setItem(PENDING_SHARE_KEY, share);
-      return;
-    }
-    sessionStorage.removeItem(PENDING_SHARE_KEY);
+    sessionStorage.setItem(PENDING_SHARE_KEY, share);
+    if (!authUid) return;
     sessionStorage.setItem(LOGIN_GATE_KEY, "1");
     setLoginGatePassed(true);
-    processShareAndOpenDetail(share);
-  }, [searchParams, authUid, processShareAndOpenDetail]);
+  }, [searchParams, authUid]);
 
   /** 경기 목록 탭에서 공유(shareId) 경기 카드를 Firestore 최신 데이터로 갱신 → 카드가 항상 최신으로 동기화 표시. 진입 시 1회 + 25초마다 갱신 */
   useEffect(() => {
@@ -505,15 +518,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (typeof window === "undefined") return;
     if (sessionStorage.getItem(LOGIN_GATE_KEY) === "1") setLoginGatePassed(true);
   }, []);
-
-  /** 로그인 통과 직후: 공유 링크로 들어와 대기 중이던 share가 있으면 경기 로드 후 상세 진입 */
-  useEffect(() => {
-    if (!loginGatePassed || typeof window === "undefined") return;
-    const pending = sessionStorage.getItem(PENDING_SHARE_KEY);
-    if (!pending) return;
-    sessionStorage.removeItem(PENDING_SHARE_KEY);
-    processShareAndOpenDetail(pending);
-  }, [loginGatePassed, processShareAndOpenDetail]);
 
   /** 탭 전환 시 sessionStorage에 저장 → 새로고침 시 해당 탭 유지 */
   useEffect(() => {
@@ -567,6 +571,20 @@ export function GameView({ gameId }: { gameId: string | null }) {
   };
   /** 업로드까지 했고, 현재 프로필에 필수 항목이 모두 있으면 완성 (아이콘 채움·경기 방식/목록 이용 가능) */
   const isProfileComplete = hasUploadedProfileAfterLogin && hasRequiredProfileFields();
+
+  useEffect(() => {
+    if (!isProfileComplete && navView !== "myinfo") {
+      setNavView("myinfo");
+    }
+  }, [isProfileComplete, navView]);
+
+  useEffect(() => {
+    if (!loginGatePassed || !isProfileComplete || typeof window === "undefined") return;
+    const pending = sessionStorage.getItem(PENDING_SHARE_KEY);
+    if (!pending) return;
+    sessionStorage.removeItem(PENDING_SHARE_KEY);
+    processShareAndOpenDetail(pending);
+  }, [loginGatePassed, isProfileComplete, processShareAndOpenDetail]);
 
   const navIndex = NAV_ORDER.indexOf(navView);
 
@@ -780,6 +798,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setTimeout(() => setShareToast(null), 3000);
       return;
     }
+    if (gameModeId === "individual_b") {
+      setShareToast("이 경기 방식은 준비 중입니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
     const id = createGameId();
     const mode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
     const defaultScore = mode.defaultScoreLimit ?? 21;
@@ -800,6 +823,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         if (newId) {
           saveGame(id, { ...payload, shareId: newId });
           addGameToList(id);
+          bumpApplyGeneration();
           setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId: newId }));
           syncGameListToFirebase({ added: id });
           setSelectedGameId(null);
@@ -813,7 +837,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setShareToast("저장에 실패했습니다. 네트워크를 확인하세요.");
         setTimeout(() => setShareToast(null), 3000);
       });
-  }, [gameModeId, myProfileMemberId, members, myInfo.name, myInfo.uid, syncGameListToFirebase]);
+  }, [gameModeId, myProfileMemberId, members, myInfo.name, myInfo.uid, syncGameListToFirebase, bumpApplyGeneration]);
 
   const handleShareGame = useCallback(() => {
     if (effectiveGameId === null) return;
@@ -922,6 +946,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 경기 방식에서 선정한 로직으로만 경기 생성. 생성 직후 즉시 저장·공유 반영하여 첫 진입 시에도 경기 현황 유지. */
   const doMatch = useCallback(() => {
     if (effectiveGameId === null) return;
+    if (!isGameOwner) {
+      setShareToast("대진 생성은 만든이만 할 수 있습니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
     const mode = GAME_MODES.find((m) => m.id === gameModeId);
     if (!mode || members.length < mode.minPlayers || members.length > mode.maxPlayers) return;
     const shuffled = [...members].sort(() => Math.random() - 0.5);
@@ -956,7 +985,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     uploadSharedGameIfNeeded(payload)
       .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
       .catch(() => {});
-  }, [effectiveGameId, gameModeId, gameName, gameSettings, members, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade]);
+  }, [effectiveGameId, gameModeId, gameName, gameSettings, members, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, isGameOwner]);
 
   const scoreLimit = Math.max(1, gameSettings.scoreLimit || 21);
 
@@ -969,6 +998,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
       if (Number.isNaN(s1) || Number.isNaN(s2) || s1 < 0 || s2 < 0) return;
       if (s1 > scoreLimit || s2 > scoreLimit) return;
       if (effectiveGameId === null) return;
+      if (!canRecordScores) {
+        setShareToast("프로필로 나 추가한 뒤에 점수를 기록할 수 있습니다.");
+        setTimeout(() => setShareToast(null), 3000);
+        return;
+      }
       const existing = loadGame(effectiveGameId);
       const baseMatches = existing.matches ?? matches;
       const match = baseMatches.find((m) => m.id === matchId);
@@ -1019,7 +1053,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           .catch(() => {});
       }, SAVE_RESULT_FIRESTORE_DEBOUNCE_MS);
     },
-    [matches, scoreInputs, scoreLimit, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, effectiveGameId, gameName, gameModeId, gameSettings, members, selectedPlayingMatchIds]
+    [matches, scoreInputs, scoreLimit, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, effectiveGameId, gameName, gameModeId, gameSettings, members, selectedPlayingMatchIds, canRecordScores]
   );
 
   const updateScoreInput = useCallback((matchId: string, side: "s1" | "s2", value: string) => {
@@ -1030,6 +1064,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }, []);
 
   const addMember = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
+    if (!isGameOwner) return;
     const trimmed = name.trim();
     if (!trimmed) return;
     const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
@@ -1054,7 +1089,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
-  }, [gameModeId, members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
+  }, [gameModeId, members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, isGameOwner]);
 
   /** 프로필로 나 추가 시 사용: 나의 프로필에 내포된 UID로 연동(linkedUid) 멤버 추가 후 '나'로 설정 */
   const addMemberAsMe = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
@@ -1087,6 +1122,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }, [gameModeId, myInfo.uid, members, effectiveGameId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
 
   const removeMember = useCallback((id: string) => {
+    const uid = myInfo.uid ?? getCurrentUserUid();
+    const target = members.find((m) => m.id === id);
+    const isSelf = Boolean(uid && target?.linkedUid && target.linkedUid === uid);
+    if (!isGameOwner && !isSelf) return;
     rosterEditCooldownUntilRef.current = Date.now() + 1500;
     const nextMembers = members.filter((m) => m.id !== id);
     setMembers(() => nextMembers);
@@ -1106,7 +1145,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
-  }, [members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
+  }, [members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, myInfo.uid, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, isGameOwner]);
 
   /** 경기 결과 = 경기 현황(matches)만으로 산출. 명단에서 인원 삭제해도 결과는 현황 기준으로 유지 */
   const ranking = useMemo(
@@ -1194,6 +1233,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
    * 새로 진행에 넣을 때, 이미 진행인 경기 중 이 경기와 선수가 겹치면 해당 경기는 진행에서 제거.
    */
   const togglePlayingMatch = (matchId: string) => {
+    if (!canRecordScores) {
+      setShareToast("프로필로 나 추가한 뒤에 진행 현황을 바꿀 수 있습니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
+    }
     const match = matches.find((m) => m.id === matchId);
     if (!match) return;
     playingSelectionCooldownUntilRef.current = Date.now() + 2000;
@@ -1634,10 +1678,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }}
           >
             <p className="text-sm text-slate-700 leading-relaxed">
-              선택한 경기 방식이 경기 목록에 추가됩니다. 원하는 경기를 누르면 상세가 열려 편집할 수 있습니다. 공유 링크를 참가자에게 전달하면, 받은 사람은 경기 명단에 신청(참가자 추가)하고 경기 현황에서 경기 결과를 함께 입력할 수 있습니다.
+              선택한 경기 방식이 경기 목록에 추가됩니다. 공유 링크를 열면 경기를 볼 수 있고, 명단에 「프로필로 나 추가」하면 참여 경기로 내 목록에 남습니다. 만든이는 요약·명단·대진을 관리하고, 참여자는 점수와 진행 현황을 함께 기록합니다.
             </p>
             <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-              Firebase보다 많이 보이면 이 기기에만 있는 경기(로컬 전용)입니다. 경기 목록에서 위로 당겨 새로고침하면 서버 목록으로 맞춰지고, 서버에 없는 항목은 목록에서만 사라집니다.
+              만든이가 경기를 삭제하면 다른 사람의 목록에서도 사라집니다. 참여자는 목록에서만 빼며 원본은 지우지 않습니다.
             </p>
             <button
               type="button"
@@ -1716,23 +1760,25 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   })}
                 </ul>
                 {GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId).length === 0 && (
-                  <p className="px-0.5 py-2 text-xs text-slate-500">이 카테고리에 등록된 경기 방식이 없습니다.</p>
+                  <p className="px-0.5 py-2 text-xs text-slate-500">준비 중</p>
                 )}
               </nav>
               {/* 우측: 해당 카테고리에서 선택한 경기 방식일 때만 상세 표시 */}
               <div className="flex-1 min-w-0 px-1 py-1 text-fluid-base text-[#6e6e73] space-y-1 leading-relaxed">
                 {(gameMode.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId ? (
                   <>
+                    {gameModeId !== "individual_b" && (
                     <button
                       type="button"
                       onClick={addGameToRecord}
-                      disabled={gameModeId === "individual_b" || !isOnline}
+                      disabled={!isOnline}
                       className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3] btn-tap"
                     >
                       아래 경기 방식으로 경기 목록에 추가
                     </button>
+                    )}
                     {gameModeId === "individual_b" && (
-                      <p className="text-xs text-slate-500 mb-2">개인전b는 아직 경기 목록 추가 기능을 지원하지 않습니다.</p>
+                      <p className="text-xs text-slate-500 mb-2">개인전b는 준비 중입니다. 지금은 개인전a로 경기를 만들 수 있습니다.</p>
                     )}
                     {gameModeId === "individual" ? (
                       <div className="space-y-3">
@@ -1816,7 +1862,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-slate-500 py-8 text-center">왼쪽 목록에서 경기 방식을 선택하면 상세 내용이 표시됩니다.</p>
+                  <p className="text-sm text-slate-500 py-8 text-center">
+                    {GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId).length === 0
+                      ? "이 경기 방식은 준비 중입니다. 지금은 복식에서 경기를 만들 수 있습니다."
+                      : "왼쪽 목록에서 경기 방식을 선택하면 상세 내용이 표시됩니다."}
+                  </p>
                 )}
               </div>
             </div>
@@ -2250,7 +2300,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="px-2 py-1.5 border-b border-[#e8e8ed] flex items-center justify-between">
               <div>
                 <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
-                <p className="text-xs text-slate-500 mt-0.5">아래에서 경기 인원을 추가·삭제할 수 있습니다. <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>🔃</span>=연동(Firebase 계정) · <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>⏸️</span>=비연동</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {isGameOwner
+                    ? "만든이는 인원을 추가·삭제하고 대진을 생성합니다. 참여자는 프로필로 나 추가와 점수 기록만 합니다."
+                    : "참여자는 프로필로 나 추가한 뒤 점수를 기록할 수 있습니다. 명단·대진 변경은 만든이만 가능합니다."}{" "}
+                  <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>🔃</span>=연동(Firebase 계정) · <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>⏸️</span>=비연동
+                </p>
               </div>
               <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
                 {members.length}명
@@ -2284,6 +2339,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         </span>
                       </td>
                       <td className="border-l border-slate-300 px-1 py-0 align-middle">
+                        {(isGameOwner || Boolean((myInfo.uid ?? getCurrentUserUid()) && m.linkedUid && (myInfo.uid ?? getCurrentUserUid()) === m.linkedUid)) ? (
                         <button
                           type="button"
                           onClick={() => removeMember(m.id)}
@@ -2292,12 +2348,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         >
                           ×
                         </button>
+                        ) : (
+                          <span className="inline-block w-6 h-6" />
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {isGameOwner && (
             <div className="border-t border-[#e8e8ed] px-2 py-2">
               <div className="flex flex-row items-center gap-1.5 flex-nowrap overflow-hidden">
                 <span className="text-xs font-medium text-slate-600 shrink-0 whitespace-nowrap">인원 추가</span>
@@ -2350,6 +2410,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </button>
               </div>
             </div>
+            )}
             <div className="border-t border-[#e8e8ed] px-2 py-2">
               <button
                 type="button"
@@ -2375,7 +2436,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     return;
                   }
                   addMemberAsMe(name, myInfo.gender ?? "M", myInfo.grade ?? "D");
-                  if (effectiveGameId != null && !loadGameList().includes(effectiveGameId)) {
+                  if (effectiveGameId != null) {
                     enrollGameInMyList(effectiveGameId);
                   }
                 }}
@@ -2383,6 +2444,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               >
                 프로필로 나 추가
               </button>
+              {isGameOwner && (
               <button
                 type="button"
                 disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers || (matches.length > 0 && !rosterChangedSinceGenerate)}
@@ -2403,6 +2465,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               >
                 경기 생성
               </button>
+              )}
               <p className="text-xs text-slate-500 mt-1.5">
                 <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
               </p>
@@ -2497,7 +2560,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       : isPlayable
                         ? "bg-green-500 text-white border border-green-600 font-semibold"
                         : "bg-slate-100 text-slate-600";
-                  const canSelect = !isDone;
+                  const canSelect = !isDone && canRecordScores;
                   const history = m.savedHistory && m.savedHistory.length > 0 ? m.savedHistory : (m.savedAt ? [{ at: m.savedAt, by: m.savedBy ?? "", savedByName: null }] : []);
                   const lastSaved = history.length > 0 ? history[history.length - 1] : null;
                   const savedByName = lastSaved?.savedByName ?? (lastSaved?.by ? members.find((p) => p.id === lastSaved.by)?.name : null);
@@ -2566,7 +2629,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             if (v !== "" && !Number.isNaN(n) && n > scoreLimit) v = String(scoreLimit);
                             updateScoreInput(m.id, "s1", v);
                           }}
-                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          disabled={!canRecordScores}
+                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
                           aria-label="팀1 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
@@ -2583,7 +2647,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             if (v !== "" && !Number.isNaN(n) && n > scoreLimit) v = String(scoreLimit);
                             updateScoreInput(m.id, "s2", v);
                           }}
-                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          disabled={!canRecordScores}
+                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
                           aria-label="팀2 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
@@ -2617,7 +2682,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <button
                       type="button"
                       onClick={() => saveResult(m.id)}
-                      className="shrink-0 min-w-[2rem] px-1 py-1 rounded text-xs font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center"
+                      disabled={!canRecordScores}
+                      className="shrink-0 min-w-[2rem] px-1 py-1 rounded text-xs font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       저장
                     </button>

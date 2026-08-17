@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { createGameId, loadGame, loadGameList, saveGame, saveGameList } from "@/lib/game-storage";
+import { createGameId, loadGame, loadGameList, removeGameFromList, saveGame, saveGameList } from "@/lib/game-storage";
 import { ensureFirebase } from "@/lib/firebase";
 import {
   getGameListForUid,
@@ -70,54 +70,94 @@ export function useGameListSync(
   currentAuthUidRef.current = authUid;
   const applyGenerationRef = useRef(0);
 
-  /** 해석된 목록을 로컬에 저장하고, 공유 경기만 실시간 구독. 로컬에만 있는 참여 경기도 유지. */
-  const applyResolvedList = useCallback(
-    (resolved: GameListEntry[]) => {
-      const localIdsBefore = loadGameList();
-      const byShare = new Map<string, GameListEntry>();
-      const noShare: GameListEntry[] = [];
-      for (const e of resolved) {
-        if (e.shareId) byShare.set(e.shareId, e);
-        else noShare.push(e);
+  const dropGameFromMyList = useCallback(
+    (localId: string, shareId?: string | null) => {
+      removeGameFromList(localId);
+      const uid = currentAuthUidRef.current;
+      if (uid && isSyncAvailable()) {
+        getUserGameList(uid)
+          .then((remote) => {
+            const filtered = remote.filter(
+              (e) => e.id !== localId && !(shareId && e.shareId === shareId)
+            );
+            return setUserGameList(uid, dedupeByShareId(filtered));
+          })
+          .catch(() => {});
       }
-      for (const id of localIdsBefore) {
-        const shareId = loadGame(id)?.shareId;
-        if (shareId && !byShare.has(shareId)) {
-          byShare.set(shareId, { id, shareId });
-        }
-      }
-      const merged = [...noShare, ...byShare.values()];
-      const seenLocal = new Set<string>();
-      const toSubscribe: GameListEntry[] = [];
-      const listIds: string[] = [];
-      for (const e of merged) {
-        if (seenLocal.has(e.id)) continue;
-        seenLocal.add(e.id);
-        listIds.push(e.id);
-        toSubscribe.push(e);
-      }
-      saveGameList(listIds);
       onListChange();
-      unsubSharedRef.current.forEach((u) => u());
-      unsubSharedRef.current = [];
-      toSubscribe.forEach((e) => {
-        if (!e.shareId) return;
-        const unsub = subscribeSharedGame(e.shareId, (data) => {
-          saveGame(e.id, { ...data, shareId: e.shareId ?? undefined });
-          onListChange();
-        });
-        if (unsub) unsubSharedRef.current.push(unsub);
-      });
     },
     [onListChange]
+  );
+
+  const subscribeEntry = useCallback(
+    (e: GameListEntry) => {
+      if (!e.shareId) return;
+      const shareId = e.shareId;
+      const unsub = subscribeSharedGame(
+        shareId,
+        (data) => {
+          saveGame(e.id, { ...data, shareId });
+          onListChange();
+        },
+        undefined,
+        () => dropGameFromMyList(e.id, shareId)
+      );
+      if (unsub) unsubSharedRef.current.push(unsub);
+    },
+    [dropGameFromMyList, onListChange]
+  );
+
+  /** 서버 목록을 기준으로 두되, 아직 목차에 안 오른 살아 있는 경기는 유지하고 원본이 없는 유령만 제거. */
+  const applyResolvedList = useCallback(
+    (resolved: GameListEntry[]) => {
+      const gen = applyGenerationRef.current;
+      const localIdsBefore = loadGameList();
+      (async () => {
+        const byShare = new Map<string, GameListEntry>();
+        const noShare: GameListEntry[] = [];
+        for (const e of resolved) {
+          if (e.shareId) byShare.set(e.shareId, e);
+          else noShare.push(e);
+        }
+        for (const id of localIdsBefore) {
+          const shareId = loadGame(id)?.shareId;
+          if (!shareId || byShare.has(shareId)) continue;
+          const stillThere = await getSharedGame(shareId);
+          if (applyGenerationRef.current !== gen) return;
+          if (stillThere) byShare.set(shareId, { id, shareId });
+        }
+        const merged = [...noShare, ...byShare.values()];
+        const seenLocal = new Set<string>();
+        const toSubscribe: GameListEntry[] = [];
+        const listIds: string[] = [];
+        for (const e of merged) {
+          if (seenLocal.has(e.id)) continue;
+          seenLocal.add(e.id);
+          listIds.push(e.id);
+          toSubscribe.push(e);
+        }
+        const keep = new Set(listIds);
+        for (const id of loadGameList()) {
+          if (!keep.has(id)) removeGameFromList(id);
+        }
+        saveGameList(listIds);
+        onListChange();
+        unsubSharedRef.current.forEach((u) => u());
+        unsubSharedRef.current = [];
+        toSubscribe.forEach((e) => subscribeEntry(e));
+      })().catch(() => {});
+    },
+    [onListChange, subscribeEntry]
   );
 
   /** 서버 목록 적용. forUid와 현재 로그인 UID가 같을 때만 적용 (계정 전환 후 이전 구독 콜백이 덮어쓰는 것 방지) */
   const applyServerList = useCallback(
     (entries: GameListEntry[], forUid: string | null) => {
+      const gen = applyGenerationRef.current;
       resolveToLocalEntries(entries)
         .then((resolved) => {
           if (currentAuthUidRef.current !== forUid) return;
+          if (applyGenerationRef.current !== gen) return;
           applyResolvedList(resolved);
         })
         .catch(() => {});
@@ -134,16 +174,8 @@ export function useGameListSync(
       .filter((e): e is GameListEntry & { shareId: string } => !!e.shareId);
     unsubSharedRef.current.forEach((u) => u());
     unsubSharedRef.current = [];
-    entries.forEach((e) => {
-      const shareId = e.shareId;
-      if (!shareId) return;
-      const unsub = subscribeSharedGame(shareId, (data) => {
-        saveGame(e.id, { ...data, shareId });
-        onListChange();
-      });
-      if (unsub) unsubSharedRef.current.push(unsub);
-    });
-  }, [onListChange]);
+    entries.forEach((e) => subscribeEntry(e));
+  }, [subscribeEntry]);
 
   useEffect(() => {
     if (!authUid || typeof window === "undefined") return;
