@@ -17,6 +17,7 @@ import {
 import type { GameData } from "@/lib/game-storage";
 import type { Match, Member, SavedRecord } from "@/app/types";
 import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
+import { gameHasRecordedScore, isRecordedScore, recomputeMemberStatsFromMatches } from "@/lib/match-stats";
 
 const COLLECTION = "sharedGames";
 const USER_GAME_LIST_COLLECTION = "userGameLists";
@@ -42,7 +43,7 @@ export function getFirestorePayloadSize(data: GameData): number {
 }
 
 function matchHasScore(m: Match): boolean {
-  return m.score1 != null || m.score2 != null;
+  return isRecordedScore(m);
 }
 
 function mergeSavedHistory(a?: SavedRecord[], b?: SavedRecord[]): SavedRecord[] {
@@ -141,7 +142,7 @@ function mergeMembers(remote: Member[], local: Member[], isOwner: boolean, edito
     const idx = result.findIndex((m) => m.id === self.id || m.linkedUid === editorUid);
     if (idx >= 0) {
       result[idx] = { ...result[idx], ...self, linkedUid: editorUid };
-    } else {
+    } else if (!result.some((m) => m.linkedUid === editorUid)) {
       result.push(self);
     }
   }
@@ -153,7 +154,11 @@ export function mergeGameData(remote: GameData, local: GameData, editorUid?: str
   const ownerUid = remote.createdByUid ?? local.createdByUid;
   const isOwner = Boolean(editorUid && ownerUid && editorUid === ownerUid);
   const matches = mergeMatches(remote.matches ?? [], local.matches ?? [], isOwner);
-  const members = mergeMembers(remote.members ?? [], local.members ?? [], isOwner, editorUid);
+  const freezeRoster = gameHasRecordedScore(remote.matches) || gameHasRecordedScore(local.matches);
+  const membersBase = freezeRoster
+    ? (remote.members ?? [])
+    : mergeMembers(remote.members ?? [], local.members ?? [], isOwner, editorUid);
+  const members = recomputeMemberStatsFromMatches(membersBase, matches);
 
   const scoredIds = new Set(matches.filter(matchHasScore).map((m) => m.id));
   const remotePlayAt = remote.playingUpdatedAt ?? "";
@@ -283,6 +288,30 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<Sh
     console.error("[Firebase] setSharedGame 실패:", e);
     return { ok: false, conflicts: [] };
   }
+}
+
+/** 탈퇴 시 참여 경기에서 내 연동만 끊는다. 점수가 있으면 이름 칸은 남기고 linkedUid만 지운다. */
+export async function unlinkUidFromSharedGame(shareId: string, uid: string): Promise<void> {
+  const ok = await ensureFirebase();
+  const db = getDb();
+  if (!ok || !db || !uid) return;
+  const ref = doc(db, COLLECTION, shareId);
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) return;
+    const remote = fromStored(shareId, snap.data()?.gameData);
+    if (!remote) return;
+    const recorded = gameHasRecordedScore(remote.matches);
+    const members = recorded
+      ? (remote.members ?? []).map((m) => (m.linkedUid === uid ? { ...m, linkedUid: undefined } : m))
+      : (remote.members ?? []).filter((m) => m.linkedUid !== uid);
+    const merged = { ...remote, members };
+    transaction.set(ref, {
+      gameData: toStoredData(merged),
+      updatedAt: serverTimestamp(),
+      createdByUid: snap.data()?.createdByUid ?? merged.createdByUid ?? null,
+    });
+  });
 }
 
 /** 공유 경기 데이터일 때만 Firestore에 업로드. shareId 없거나 sync 불가 시 아무 작업 안 함. */

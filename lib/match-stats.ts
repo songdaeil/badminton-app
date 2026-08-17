@@ -1,17 +1,53 @@
 import type { Member, Match } from "@/app/types";
 
+/** 실제로 기록된 점수. 빈칸·0-0은 경기가 시작되지 않은 것으로 본다. */
+export function isRecordedScore(m: Pick<Match, "score1" | "score2">): boolean {
+  return m.score1 != null && m.score2 != null && (m.score1 !== 0 || m.score2 !== 0);
+}
+
+export function gameHasRecordedScore(matches?: Match[] | null): boolean {
+  return (matches ?? []).some(isRecordedScore);
+}
+
+/** 명단에만 있고 대진에 없는 사람이 있으면 true. 만든이가 대진을 다시 만들어야 함. */
+export function rosterOutOfSyncWithDraw(members: Member[], matches: Match[]): boolean {
+  if (matches.length === 0) return false;
+  const inDraw = new Set<string>();
+  for (const match of matches) {
+    for (const p of match.team1.players) inDraw.add(p.id);
+    for (const p of match.team2.players) inDraw.add(p.id);
+  }
+  return members.some((m) => !inDraw.has(m.id));
+}
+
+/** 내 연동 칸만 나의 프로필 멤버로 본다. 공유 문서의 myProfileMemberId(만든이 칸)를 쓰지 않는다. */
+export function resolveMyProfileMemberId(
+  members: Member[],
+  uid: string | null | undefined,
+  name?: string
+): string | null {
+  if (uid) {
+    const linked = members.find((m) => m.linkedUid === uid);
+    if (linked) return linked.id;
+  }
+  const trimmed = name?.trim();
+  if (!trimmed) return null;
+  const byName = members.find((m) => m.name === trimmed && (!m.linkedUid || m.linkedUid === uid));
+  return byName?.id ?? null;
+}
+
 /** 내 프로필 멤버에만 이름·성별·급수 반영. 저장 시 단일 소스로 사용. */
 export function applyMyProfileToMembers(
   members: Member[],
   myProfileMemberId: string | null,
-  myInfo: { name?: string; gender?: "M" | "F"; grade?: string }
+  myInfo: { name?: string; gender?: "M" | "F"; grade?: string; uid?: string | null }
 ): Member[] {
   if (!myProfileMemberId) return members;
-  return members.map((m) =>
-    m.id === myProfileMemberId
-      ? { ...m, name: myInfo.name ?? m.name, gender: (myInfo.gender as "M" | "F") ?? m.gender, grade: (myInfo.grade as Member["grade"]) ?? m.grade }
-      : m
-  );
+  return members.map((m) => {
+    if (m.id !== myProfileMemberId) return m;
+    if (m.linkedUid && myInfo.uid && m.linkedUid !== myInfo.uid) return m;
+    return { ...m, name: myInfo.name ?? m.name, gender: (myInfo.gender as "M" | "F") ?? m.gender, grade: (myInfo.grade as Member["grade"]) ?? m.grade };
+  });
 }
 
 /** 저장된 경기(score1/score2 있는 것)만으로 멤버별 승/패/득실차 재계산 → 경기 명단 state 갱신용 */

@@ -3,12 +3,12 @@
 import { deleteUser } from "firebase/auth";
 import { deleteDoc, doc } from "firebase/firestore";
 import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
-import { deleteSharedGame, getSharedGameIdsByUid } from "@/lib/sync";
+import { deleteSharedGame, getSharedGameIdsByUid, getUserGameList, unlinkUidFromSharedGame } from "@/lib/sync";
 
 const USERS_COLLECTION = "users";
 const USER_GAME_LIST_COLLECTION = "userGameLists";
 
-/** 이 계정 프로필·목록·내가 만든 공유 경기·Auth를 지운다. 최근 로그인이 필요하면 실패 메시지를 반환한다. */
+/** 이 계정 프로필·목록·내가 만든 공유 경기·Auth를 지운다. 참여 경기에서는 연동만 끊는다. */
 export async function deleteCurrentAccount(): Promise<{ ok: boolean; message?: string }> {
   const ok = await ensureFirebase();
   const auth = getAuthInstance();
@@ -19,8 +19,14 @@ export async function deleteCurrentAccount(): Promise<{ ok: boolean; message?: s
   }
   const uid = user.uid;
   try {
-    const shareIds = await getSharedGameIdsByUid(uid);
-    for (const shareId of shareIds) {
+    const [ownedShareIds, list] = await Promise.all([getSharedGameIdsByUid(uid), getUserGameList(uid)]);
+    const owned = new Set(ownedShareIds);
+    for (const entry of list) {
+      if (entry.shareId && !owned.has(entry.shareId)) {
+        await unlinkUidFromSharedGame(entry.shareId, uid).catch(() => {});
+      }
+    }
+    for (const shareId of ownedShareIds) {
       await deleteSharedGame(shareId);
     }
     await deleteDoc(doc(db, USER_GAME_LIST_COLLECTION, uid)).catch(() => {});
