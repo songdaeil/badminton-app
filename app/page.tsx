@@ -19,7 +19,6 @@ import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
 import { useGameListSync } from "@/app/hooks/useGameListSync";
-import { decodeGameFromShare, encodeGameForShare } from "@/lib/game-share";
 import { applyMyProfileToMembers, buildRankingFromMatchesOnly, recomputeMemberStatsFromMatches } from "@/lib/match-stats";
 import {
   createId,
@@ -48,6 +47,41 @@ function applySharedWriteResult(
     setToast("다른 사람이 먼저 저장한 점수가 있어 그 매치는 덮지 않았습니다.");
     setTimeout(() => setToast(null), 4000);
   }
+}
+
+/** 내 프로필을 명단에 넣는다. 이미 있으면 그 칸을 나로 표시하고, 가득 차면 그대로 둔다. */
+function joinSelfToGameData(
+  data: GameData,
+  profile: { uid?: string | null; name?: string; gender?: "M" | "F"; grade?: Grade }
+): GameData {
+  const uid = profile.uid;
+  const name = profile.name?.trim() ?? "";
+  if (!uid || !name) return data;
+  const members = data.members ?? [];
+  const existing = members.find((m) => m.linkedUid === uid);
+  if (existing) {
+    return { ...data, myProfileMemberId: existing.id };
+  }
+  const mode = GAME_MODES.find((m) => m.id === data.gameMode) ?? GAME_MODES[0];
+  if (members.length >= (mode.maxPlayers ?? 12)) return data;
+  const newId = createId();
+  return {
+    ...data,
+    members: [
+      ...members,
+      {
+        id: newId,
+        name,
+        gender: profile.gender === "F" ? "F" : "M",
+        grade: profile.grade === "A" || profile.grade === "B" || profile.grade === "C" ? profile.grade : "D",
+        wins: 0,
+        losses: 0,
+        pointDiff: 0,
+        linkedUid: uid,
+      },
+    ],
+    myProfileMemberId: newId,
+  };
 }
 
 /** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
@@ -86,6 +120,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [authUid, setAuthUid] = useState<string | null>(null);
   /** 이 uid의 서버 프로필이 있을 때만 true. 기기 깃발을 쓰지 않아 이전 계정과 섞이지 않음 */
   const [hasUploadedProfileAfterLogin, setHasUploadedProfileAfterLogin] = useState(false);
+  /** 서버 프로필 조회가 끝나기 전에는 온보딩을 보여주지 않음 (재방문 시 빈 폼이 깜빡이지 않게) */
+  const [profileCheckDone, setProfileCheckDone] = useState(false);
   /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
   const [phoneStep, setPhoneStep] = useState<"idle" | "sending" | "code" | "error">("idle");
   const [phoneNumberInput, setPhoneNumberInput] = useState("");
@@ -204,6 +240,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
     return Boolean(uid && members.some((m) => m.linkedUid === uid));
   }, [members, myInfo.uid]);
   const canRecordScores = isGameOwner || isOnRoster;
+  const hasSavedScore = useMemo(
+    () => matches.some((m) => m.score1 != null || m.score2 != null),
+    [matches]
+  );
   const gameMode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
   /** 테이블 내 직접입력 행: 새 참가자 입력값 */
   const [newMemberName, setNewMemberName] = useState("");
@@ -395,7 +435,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
   }, [effectiveGameId, syncGameListToFirebase]);
 
-  /** 공유 링크는 상세만 연다. 목록 등록은 만든이이거나 명단에 나 추가한 뒤에만. */
+  /** 공유 링크를 열면 내 목록에 넣고, 명단에 없으면 나를 넣는다. */
   const processShareAndOpenDetail = useCallback(
     (share: string) => {
       const existingIds = loadGameList();
@@ -403,66 +443,41 @@ export function GameView({ gameId }: { gameId: string | null }) {
         (id) => loadGame(id).shareId === share || loadGame(id).importedFromShare === share
       );
       const uid = myInfo.uid ?? getCurrentUserUid();
-      const openDetail = (localId: string, createdByUid?: string | null) => {
-        if (uid && createdByUid && uid === createdByUid) {
-          enrollGameInMyList(localId);
-        }
+      const openJoined = (localId: string, data: GameData) => {
+        const joined = joinSelfToGameData(data, {
+          uid,
+          name: myInfo.name,
+          gender: myInfo.gender,
+          grade: myInfo.grade,
+        });
+        saveGame(localId, joined);
+        enrollGameInMyList(localId);
         setNavView("record");
         setSelectedGameId(localId);
         router.replace("/?view=record", { scroll: false });
       };
       if (alreadyInListId != null) {
-        openDetail(alreadyInListId, loadGame(alreadyInListId).createdByUid);
+        openJoined(alreadyInListId, loadGame(alreadyInListId));
         return;
       }
       getSharedGame(share).then((data) => {
         if (data) {
           const newId = createGameId();
-          saveGame(newId, {
+          openJoined(newId, {
             ...data,
             playingMatchIds: data.playingMatchIds ?? [],
             shareId: share,
           });
-          openDetail(newId, data.createdByUid);
           return;
         }
-        const fallback = decodeGameFromShare(share);
-        if (!fallback) return;
-        let merged = fallback;
-        if (!merged.createdByName && merged.createdBy) {
-          const name = merged.members.find((m) => m.id === merged!.createdBy)?.name;
-          if (name) merged = { ...merged, createdByName: name };
-        }
-        const newId = createGameId();
-        saveGame(newId, {
-          ...merged,
-          createdAt: merged.createdAt ?? new Date().toISOString(),
-          createdBy: merged.createdBy ?? null,
-          createdByName: merged.createdByName ?? null,
-          playingMatchIds: [],
-          importedFromShare: share,
-        });
-        openDetail(newId, merged.createdByUid);
+        setShareToast("경기를 찾지 못했습니다. 공유한 사람에게 링크를 다시 받아 주세요.");
+        setTimeout(() => setShareToast(null), 4000);
       }).catch(() => {
-        const data = decodeGameFromShare(share);
-        if (!data) return;
-        if (!data.createdByName && data.createdBy) {
-          const name = data.members.find((m) => m.id === data.createdBy)?.name;
-          if (name) Object.assign(data, { createdByName: name });
-        }
-        const newId = createGameId();
-        saveGame(newId, {
-          ...data,
-          createdAt: data.createdAt ?? new Date().toISOString(),
-          createdBy: data.createdBy ?? null,
-          createdByName: data.createdByName ?? null,
-          playingMatchIds: [],
-          importedFromShare: share,
-        });
-        openDetail(newId, data.createdByUid);
+        setShareToast("경기를 찾지 못했습니다. 네트워크를 확인하세요.");
+        setTimeout(() => setShareToast(null), 4000);
       });
     },
-    [router, enrollGameInMyList, myInfo.uid]
+    [router, enrollGameInMyList, myInfo.uid, myInfo.name, myInfo.gender, myInfo.grade]
   );
 
   /** 공유 링크(?share=...): 전화 로그인·프로필이 끝날 때까지 보관만. 인증을 건너뛰지 않음 */
@@ -541,6 +556,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setLoginGatePassed(Boolean(uid && phone));
         if (!uid) {
           setHasUploadedProfileAfterLogin(false);
+          setProfileCheckDone(false);
           const cleared = { ...DEFAULT_MYINFO };
           setMyInfo(cleared);
           saveMyInfo(cleared);
@@ -563,28 +579,44 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   /** 로그인 시 이 계정 서버 프로필만 반영. 없으면 온보딩 */
   useEffect(() => {
-    if (!authUid || !loginGatePassed) return;
+    if (!authUid || !loginGatePassed) {
+      if (!loginGatePassed) setProfileCheckDone(false);
+      return;
+    }
+    setProfileCheckDone(false);
     const phone = getCurrentPhoneUser()?.phoneNumber;
-    getRemoteProfile(authUid).then((remote) => {
-      if (remote) {
-        const withUid: MyInfo = {
-          ...DEFAULT_MYINFO,
-          ...remote,
-          uid: authUid,
-          phoneNumber: phone ?? remote.phoneNumber,
-        };
-        if (!withUid.name) withUid.name = "";
-        if (!withUid.gender) withUid.gender = "M";
-        setMyInfo(withUid);
-        saveMyInfo(withUid);
-        setHasUploadedProfileAfterLogin(true);
-      } else {
-        const next: MyInfo = { ...DEFAULT_MYINFO, uid: authUid, phoneNumber: phone };
-        setMyInfo(next);
-        saveMyInfo(next);
+    getRemoteProfile(authUid)
+      .then((remote) => {
+        if (remote) {
+          const withUid: MyInfo = {
+            ...DEFAULT_MYINFO,
+            ...remote,
+            uid: authUid,
+            phoneNumber: phone ?? remote.phoneNumber,
+          };
+          if (!withUid.name) withUid.name = "";
+          if (!withUid.gender) withUid.gender = "M";
+          setMyInfo(withUid);
+          saveMyInfo(withUid);
+          setHasUploadedProfileAfterLogin(true);
+        } else {
+          setMyInfo((prev) => {
+            const keepDraft = prev.uid === authUid && Boolean(prev.name?.trim() || prev.birthDate);
+            const next: MyInfo = keepDraft
+              ? { ...prev, uid: authUid, phoneNumber: phone ?? prev.phoneNumber }
+              : { ...DEFAULT_MYINFO, uid: authUid, phoneNumber: phone };
+            saveMyInfo(next);
+            return next;
+          });
+          setHasUploadedProfileAfterLogin(false);
+        }
+      })
+      .catch(() => {
         setHasUploadedProfileAfterLogin(false);
-      }
-    });
+      })
+      .finally(() => {
+        setProfileCheckDone(true);
+      });
   }, [authUid, loginGatePassed]);
 
   /** 프로필 필수 항목 유무 (동기화 후 사용자가 지워도 검사) */
@@ -597,13 +629,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
   };
   /** 업로드까지 했고, 현재 프로필에 필수 항목이 모두 있으면 완성 (아이콘 채움·경기 방식/목록 이용 가능) */
   const isProfileComplete = hasUploadedProfileAfterLogin && hasRequiredProfileFields();
-
-  useEffect(() => {
-    if (!loginGatePassed) return;
-    if (!isProfileComplete && navView !== "myinfo") {
-      setNavView("myinfo");
-    }
-  }, [isProfileComplete, navView, loginGatePassed]);
 
   useEffect(() => {
     if (!loginGatePassed || !isProfileComplete || typeof window === "undefined") return;
@@ -726,17 +751,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const phone = getCurrentPhoneUser()?.phoneNumber ?? myInfo.phoneNumber;
     const toSave = { ...myInfo, uid, phoneNumber: phone };
     if (!myInfo.name?.trim()) {
-      setLoginMessage("이름을 입력한 뒤 업로드해 주세요.");
+      setLoginMessage("이름을 입력해 주세요.");
       setTimeout(() => setLoginMessage(null), 3000);
       return;
     }
     if (!myInfo.birthDate?.trim()) {
-      setLoginMessage("생년월일을 입력한 뒤 업로드해 주세요.");
+      setLoginMessage("생년월일을 입력해 주세요.");
       setTimeout(() => setLoginMessage(null), 3000);
       return;
     }
     if (!phone) {
-      setLoginMessage("전화번호 로그인 후 업로드해 주세요.");
+      setLoginMessage("전화번호 확인 후 저장해 주세요.");
       setTimeout(() => setLoginMessage(null), 3000);
       return;
     }
@@ -745,13 +770,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setMyInfo(toSave);
       saveMyInfo(toSave);
       setHasUploadedProfileAfterLogin(true);
-      setLoginMessage("프로필이 클라우드에 업로드되었습니다.");
+      setLoginMessage("저장했습니다.");
       setTimeout(() => setLoginMessage(null), 3000);
     } else {
-      setLoginMessage("업로드에 실패했습니다.");
+      setLoginMessage("저장에 실패했습니다.");
       setTimeout(() => setLoginMessage(null), 3000);
     }
   }, [myInfo]);
+
+  const handleSignOut = useCallback(async () => {
+    await signOutPhone();
+    const cleared = { ...DEFAULT_MYINFO };
+    setMyInfo(cleared);
+    saveMyInfo(cleared);
+    setHasUploadedProfileAfterLogin(false);
+    setProfileCheckDone(false);
+    setLoginGatePassed(false);
+    setAuthUid(null);
+    setPhoneStep("idle");
+    setPhoneNumberInput("");
+    setPhoneCodeInput("");
+    setPhoneError("");
+    phoneConfirmationResultRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!mounted || effectiveGameId === null) return;
@@ -829,16 +870,28 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const id = createGameId();
     const mode = GAME_MODES.find((m) => m.id === gameModeId) ?? GAME_MODES[0];
     const defaultScore = mode.defaultScoreLimit ?? 21;
-    const creatorName = myProfileMemberId ? members.find((m) => m.id === myProfileMemberId)?.name : null;
+    const meId = createId();
+    const meName = myInfo.name.trim();
+    const me: Member = {
+      id: meId,
+      name: meName,
+      gender: myInfo.gender ?? "M",
+      grade: myInfo.grade ?? "D",
+      wins: 0,
+      losses: 0,
+      pointDiff: 0,
+      linkedUid: creatorUid,
+    };
     const payload: GameData = {
-      members: [],
+      members: [me],
       matches: [],
       gameName: undefined,
       gameMode: gameModeId,
       gameSettings: { ...DEFAULT_GAME_SETTINGS, scoreLimit: defaultScore },
+      myProfileMemberId: meId,
       createdAt: new Date().toISOString(),
-      createdBy: myProfileMemberId ?? null,
-      createdByName: (creatorName ?? myInfo.name) || "-",
+      createdBy: meId,
+      createdByName: meName || "-",
       createdByUid: creatorUid ?? null,
     };
     addSharedGame(payload)
@@ -849,8 +902,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
           bumpApplyGeneration();
           setLastFirestoreUploadBytes(getFirestorePayloadSize({ ...payload, shareId: newId }));
           syncGameListToFirebase({ added: id });
-          setSelectedGameId(null);
           setNavView("record");
+          setSelectedGameId(id);
         } else {
           setShareToast("저장에 실패했습니다. 네트워크를 확인하세요.");
           setTimeout(() => setShareToast(null), 3000);
@@ -860,7 +913,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         setShareToast("저장에 실패했습니다. 네트워크를 확인하세요.");
         setTimeout(() => setShareToast(null), 3000);
       });
-  }, [gameModeId, myProfileMemberId, members, myInfo.name, myInfo.uid, syncGameListToFirebase, bumpApplyGeneration]);
+  }, [gameModeId, myInfo.name, myInfo.gender, myInfo.grade, myInfo.uid, syncGameListToFirebase, bumpApplyGeneration]);
 
   const handleShareGame = useCallback(() => {
     if (effectiveGameId === null) return;
@@ -911,18 +964,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const data = loadGame(targetGameId);
     await ensureFirebase();
     const db = getDb();
-    let shareParam: string;
-    let firebaseFailed = false;
+    let shareParam: string | null = null;
     if (db) {
       if (data.shareId) {
         const payload = { ...data, shareId: data.shareId };
         const result = await uploadSharedGameIfNeeded(payload);
-        const ok = result?.ok === true;
-        shareParam = ok ? data.shareId : encodeGameForShare(data);
-        if (ok) {
+        if (result?.ok === true) {
           saveGame(targetGameId, payload);
           applySharedWriteResult(result, payload, setLastFirestoreUploadBytes, setShareToast);
-        } else firebaseFailed = true;
+          shareParam = data.shareId;
+        }
       } else {
         const newId = await addSharedGame(data);
         if (newId) {
@@ -930,24 +981,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
           saveGame(targetGameId, toSave);
           shareParam = newId;
           setLastFirestoreUploadBytes(getFirestorePayloadSize(toSave));
-        } else {
-          shareParam = encodeGameForShare(data);
-          firebaseFailed = true;
         }
       }
-    } else {
-      shareParam = encodeGameForShare(data);
-      firebaseFailed = true;
+    }
+    if (!shareParam) {
+      setShareToast("공유하려면 네트워크가 필요합니다.");
+      setTimeout(() => setShareToast(null), 3000);
+      return;
     }
     const url = `${typeof window !== "undefined" ? window.location.origin : ""}/?share=${shareParam}`;
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(url).then(
         () => {
-          setShareToast(
-            firebaseFailed
-              ? "공유 링크는 복사되었습니다. Firebase 업로드는 실패했습니다. 브라우저 콘솔(F12)을 확인하세요."
-              : "공유 링크가 복사되었습니다. 참가자에게 전달해 명단 신청·경기 결과 입력에 사용하세요."
-          );
+          setShareToast("공유 링크가 복사되었습니다. 받은 사람은 같은 경기에 참여합니다.");
           setListMenuOpenId(null);
           setTimeout(() => setShareToast(null), 4500);
         },
@@ -957,11 +1003,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         }
       );
     } else {
-      setShareToast(
-        firebaseFailed
-          ? "공유 링크는 복사되었습니다. Firebase 업로드는 실패했습니다. 브라우저 콘솔(F12)을 확인하세요."
-          : "공유 링크가 복사되었습니다. 참가자에게 전달해 명단 신청·경기 결과 입력에 사용하세요."
-      );
+      setShareToast("공유 링크가 복사되었습니다. 받은 사람은 같은 경기에 참여합니다.");
       setListMenuOpenId(null);
       setTimeout(() => setShareToast(null), 4500);
     }
@@ -1026,7 +1068,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       if (s1 > scoreLimit || s2 > scoreLimit) return;
       if (effectiveGameId === null) return;
       if (!canRecordScores) {
-        setShareToast("프로필로 나 추가한 뒤에 점수를 기록할 수 있습니다.");
+        setShareToast("명단에 있어야 점수를 기록할 수 있습니다.");
         setTimeout(() => setShareToast(null), 3000);
         return;
       }
@@ -1263,7 +1305,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
    */
   const togglePlayingMatch = (matchId: string) => {
     if (!canRecordScores) {
-      setShareToast("프로필로 나 추가한 뒤에 진행 현황을 바꿀 수 있습니다.");
+      setShareToast("명단에 있어야 진행을 바꿀 수 있습니다.");
       setTimeout(() => setShareToast(null), 3000);
       return;
     }
@@ -1307,7 +1349,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <div className="w-full max-w-sm flex flex-col items-center gap-8">
           <div className="text-center space-y-2">
             <h1 className="text-2xl font-bold text-[#1d1d1f] tracking-tight">경기 이사</h1>
-            <p className="text-sm text-slate-500">전화번호로 본인 확인한 뒤 이용합니다. 인증문자를 받으면 가입과 로그인이 됩니다.</p>
+            <p className="text-sm text-slate-500">전화번호로 본인 확인합니다. 처음이면 이어서 이름을 넣고, 이미 쓰면 바로 들어갑니다.</p>
           </div>
           <div className="w-full space-y-3">
             <div className="space-y-2">
@@ -1450,6 +1492,121 @@ export function GameView({ gameId }: { gameId: string | null }) {
     );
   }
 
+  if (!profileCheckDone) {
+    return (
+      <div className="min-h-screen bg-[#f5f5f7] flex items-center justify-center">
+        <div className="text-[#6e6e73] text-sm font-medium">로딩 중...</div>
+      </div>
+    );
+  }
+
+  if (!isProfileComplete) {
+    return (
+      <div className="min-h-screen min-h-[100dvh] bg-[#f5f5f7] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
+        <div className="w-full max-w-sm flex flex-col items-center gap-6">
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-bold text-[#1d1d1f] tracking-tight">경기 이사</h1>
+            <p className="text-sm text-slate-500">경기를 쓰려면 이름과 생년월일이 필요합니다.</p>
+          </div>
+          <div className="w-full space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-600 font-medium">이름</label>
+              <input
+                type="text"
+                value={myInfo.name}
+                onChange={(e) => {
+                  const next = { ...myInfo, name: e.target.value };
+                  setMyInfo(next);
+                  saveMyInfo(next);
+                }}
+                placeholder="이름"
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                aria-label="이름"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-600 font-medium">생년월일</label>
+              <input
+                type="date"
+                value={myInfo.birthDate ?? ""}
+                onChange={(e) => {
+                  const next = { ...myInfo, birthDate: e.target.value || undefined };
+                  setMyInfo(next);
+                  saveMyInfo(next);
+                }}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                aria-label="생년월일"
+              />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1 space-y-1.5">
+                <label className="text-xs text-slate-600 font-medium">성별</label>
+                <select
+                  value={myInfo.gender}
+                  onChange={(e) => {
+                    const next = { ...myInfo, gender: e.target.value as "M" | "F" };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  aria-label="성별"
+                >
+                  <option value="M">남</option>
+                  <option value="F">여</option>
+                </select>
+              </div>
+              <div className="flex-1 space-y-1.5">
+                <label className="text-xs text-slate-600 font-medium">급수</label>
+                <select
+                  value={myInfo.grade ?? "D"}
+                  onChange={(e) => {
+                    const next = { ...myInfo, grade: e.target.value as Grade };
+                    setMyInfo(next);
+                    saveMyInfo(next);
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  aria-label="급수"
+                >
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="D">D</option>
+                </select>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={uploadProfileToFirestore}
+              className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+            >
+              시작하기
+            </button>
+            {loginMessage && (
+              <p className="text-xs text-slate-600 text-center">{loginMessage}</p>
+            )}
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="w-full py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
+            >
+              다른 번호로
+            </button>
+            <p className="text-center pt-2">
+              <a
+                href="/privacy.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-slate-500 underline hover:text-slate-700"
+              >
+                개인정보 처리방침
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f] max-w-md mx-auto flex flex-col">
       {!isOnline && (
@@ -1533,10 +1690,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }}
           >
             <p className="text-sm text-slate-700 leading-relaxed">
-              선택한 경기 방식이 경기 목록에 추가됩니다. 공유 링크를 열면 경기를 볼 수 있고, 명단에 「프로필로 나 추가」하면 참여 경기로 내 목록에 남습니다. 만든이는 요약·명단·대진을 관리하고, 참여자는 점수와 진행 현황을 함께 기록합니다.
+              경기 방식으로 경기를 만들면 내가 명단에 들어갑니다. 공유 링크를 열면 같은 경기에 참여하고 내 목록에도 남습니다. 만든이는 명단·대진을 관리하고, 참여자는 점수와 진행을 함께 기록합니다.
             </p>
             <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-              만든이가 경기를 삭제하면 다른 사람의 목록에서도 사라집니다. 참여자는 목록에서만 빼며 원본은 지우지 않습니다. 같은 매치에 점수가 이미 있으면 참여자는 덮지 않고, 만든이만 수정할 수 있습니다.
+              만든이가 경기를 삭제하면 다른 사람 목록에서도 사라집니다. 참여자는 목록에서만 뺍니다. 점수가 있는 매치는 참여자가 덮지 않고, 대진도 다시 만들지 않습니다.
             </p>
             <button
               type="button"
@@ -2221,8 +2378,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {isGameOwner
-                    ? "만든이는 인원을 추가·삭제하고 대진을 생성합니다. 참여자는 프로필로 나 추가와 점수 기록만 합니다."
-                    : "참여자는 프로필로 나 추가한 뒤 점수를 기록할 수 있습니다. 명단·대진 변경은 만든이만 가능합니다."}{" "}
+                    ? "이름 추가·삭제는 만든이만 합니다. 공유 링크를 연 사람은 명단에 들어갑니다."
+                    : "공유 링크로 들어오면 명단에 들어갑니다. 대진은 만든이만 바꿉니다."}{" "}
                   <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>🔃</span>=연동(Firebase 계정) · <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>⏸️</span>=비연동
                 </p>
               </div>
@@ -2331,6 +2488,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </div>
             )}
             <div className="border-t border-[#e8e8ed] px-2 py-2">
+              {!isOnRoster && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -2338,7 +2496,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   e.stopPropagation();
                   const name = myInfo.name?.trim();
                   if (!name) {
-                    alert("경기 이사에서 프로필 이름을 먼저 입력해 주세요.");
+                    alert("나의 정보에서 이름을 먼저 넣어 주세요.");
                     return;
                   }
                   const uid = myInfo.uid ?? getCurrentUserUid();
@@ -2363,15 +2521,21 @@ export function GameView({ gameId }: { gameId: string | null }) {
               >
                 프로필로 나 추가
               </button>
+              )}
               {isGameOwner && (
               <button
                 type="button"
-                disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers || (matches.length > 0 && !rosterChangedSinceGenerate)}
+                disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers || (matches.length > 0 && !rosterChangedSinceGenerate) || hasSavedScore}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   if (members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers) {
                     alert(`경기 인원은 ${gameMode.minPlayers}~${gameMode.maxPlayers}명이어야 합니다.`);
+                    return;
+                  }
+                  if (hasSavedScore) {
+                    setShareToast("점수가 있는 경기는 대진을 다시 만들지 않습니다.");
+                    setTimeout(() => setShareToast(null), 3000);
                     return;
                   }
                   if (matches.length > 0) {
@@ -2382,12 +2546,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 }}
                 className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 bg-[#0071e3] hover:bg-[#0077ed] btn-tap disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
               >
-                경기 생성
+                {matches.length > 0 ? "대진 다시 만들기" : "경기 생성"}
               </button>
               )}
               <p className="text-xs text-slate-500 mt-1.5">
                 <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
               </p>
+              {hasSavedScore && isGameOwner && (
+                <p className="text-xs text-slate-400 mt-1 text-center">점수가 있으면 대진을 다시 만들지 않습니다.</p>
+              )}
               {members.length < gameMode.minPlayers && (
                 <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.minPlayers}</span>~<span className="font-numeric">{gameMode.maxPlayers}</span>명이어야 합니다.</p>
               )}
@@ -2725,7 +2892,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {navIndex === 2 && (
           <div key="myinfo" className="pt-4 space-y-2 animate-panel-enter">
             {!isProfileComplete && (
-              <p className="text-sm text-slate-600 px-1">이름과 생년월일을 입력한 뒤 업로드하면 경기를 이용할 수 있습니다.</p>
+              <p className="text-sm text-slate-600 px-1">이름과 생년월일을 저장하면 경기를 이용할 수 있습니다.</p>
             )}
             {/* 로그인 상태: 전화번호 + 로그아웃 */}
             {loginGatePassed ? (
@@ -2736,20 +2903,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   </p>
                   <button
                     type="button"
-                    onClick={async () => {
-                      await signOutPhone();
-                      const cleared = { ...DEFAULT_MYINFO };
-                      setMyInfo(cleared);
-                      saveMyInfo(cleared);
-                      setHasUploadedProfileAfterLogin(false);
-                      setLoginGatePassed(false);
-                      setAuthUid(null);
-                      setPhoneStep("idle");
-                      setPhoneNumberInput("");
-                      setPhoneCodeInput("");
-                      setPhoneError("");
-                      phoneConfirmationResultRef.current = null;
-                    }}
+                    onClick={handleSignOut}
                     className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
                   >
                     로그아웃
@@ -2795,7 +2949,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <div>
                   <h3 className="text-sm font-semibold text-slate-700 mb-1.5">나의 전적</h3>
                   <hr className="border-t border-slate-200 my-2" aria-hidden />
-                  <p className="text-slate-500 text-xs py-2">시스템을 준비중입니다.</p>
+                  <p className="text-slate-500 text-xs py-2">각 경기의 결과 순위에서 확인합니다.</p>
                 </div>
               </div>
             </div>
@@ -2804,10 +2958,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div className="px-3 py-3 space-y-2">
                 <h3 className="text-sm font-semibold text-slate-800">사용법</h3>
                 <ul className="text-xs text-slate-600 leading-relaxed list-disc pl-4 space-y-1">
-                  <li>전화번호로 인증 문자를 받아 입장합니다.</li>
-                  <li>경기 목록에서 공유하면 링크를 받은 사람이 같은 경기를 봅니다.</li>
-                  <li>명단의 「프로필로 나 추가」로 참여하면 내 목록에 남고 점수를 기록할 수 있습니다.</li>
-                  <li>점수는 참여자가 함께 저장합니다. 이미 저장된 매치는 만든이만 고칩니다.</li>
+                  <li>전화번호로 본인 확인합니다. 처음이면 이름과 생년월일을 넣습니다.</li>
+                  <li>경기를 만들면 내가 명단에 들어가고, 공유 링크를 열면 같은 경기에 참여합니다.</li>
+                  <li>점수는 함께 저장합니다. 이미 있는 점수는 만든이만 고칩니다.</li>
                 </ul>
               </div>
             </div>
@@ -2953,9 +3106,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onClick={uploadProfileToFirestore}
                   className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
                 >
-                  업로드
+                  저장
                 </button>
-                <span className="text-xs text-slate-500">다른 기기에서 로그인 시 이 프로필이 적용됩니다.</span>
+                <span className="text-xs text-slate-500">다른 기기에서 같은 번호로 들어오면 이 이름이 적용됩니다.</span>
               </div>
               {loginMessage && (
                 <p className="text-xs text-slate-600 mt-1 px-1">{loginMessage}</p>
@@ -2975,7 +3128,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           onClick={() => {
             if (!isProfileComplete) {
               setNavView("myinfo");
-              setShareToast("프로필을 입력한 뒤 업로드하면 이용할 수 있습니다.");
+              setShareToast("이름과 생년월일을 저장하면 이용할 수 있습니다.");
               setTimeout(() => setShareToast(null), 3000);
               return;
             }
@@ -2991,7 +3144,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           onClick={() => {
             if (!isProfileComplete) {
               setNavView("myinfo");
-              setShareToast("프로필을 입력한 뒤 업로드하면 이용할 수 있습니다.");
+              setShareToast("이름과 생년월일을 저장하면 이용할 수 있습니다.");
               setTimeout(() => setShareToast(null), 3000);
               return;
             }
@@ -3031,7 +3184,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }}
           >
             <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
-              현재 진행중인 경기 현황을 초기화가 됩니다. 진행하시겠습니까?
+              대진을 다시 만들면 지금 대진이 바뀝니다. 계속할까요?
             </p>
             <div className="flex gap-2 justify-end">
               <button
