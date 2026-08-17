@@ -91,14 +91,14 @@ export function PwaInstallPrompt() {
           role="region"
           aria-label="앱 설치 안내"
         >
-          <div className="flex items-center gap-2 rounded-xl bg-[#0071e3] text-white shadow-lg px-3 py-3 text-base">
+          <div className="flex items-center gap-2 rounded-3xl bg-[#0071e3] text-white shadow-[0_8px_24px_rgba(47,91,160,0.24)] px-3 py-3 text-base">
             <span className="flex-1 min-w-0 font-medium truncate">
               앱처럼 쓰려면 홈 화면에 추가하세요
             </span>
             <button
               type="button"
               onClick={handleInstallClick}
-              className="shrink-0 px-3 py-2.5 min-h-11 rounded-lg font-semibold bg-white text-[#0071e3] hover:bg-slate-100 transition-colors"
+              className="shrink-0 px-3 py-2.5 min-h-11 rounded-full font-semibold bg-white text-[#0071e3] hover:bg-slate-100 transition-colors"
             >
               추가하기
             </button>
@@ -121,7 +121,7 @@ export function PwaInstallPrompt() {
           role="dialog"
           aria-labelledby="pwa-ios-title"
         >
-          <div className="w-full max-w-sm rounded-t-2xl bg-white shadow-xl p-4 pb-8 safe-area-pb animate-slide-up">
+          <div className="w-full max-w-sm rounded-t-3xl bg-white shadow-[0_12px_32px_rgba(47,91,160,0.16)] p-4 pb-8 safe-area-pb animate-slide-up">
             <h2 id="pwa-ios-title" className="text-base font-semibold text-slate-800 mb-2">
               홈 화면에 추가
             </h2>
@@ -136,7 +136,7 @@ export function PwaInstallPrompt() {
             <button
               type="button"
               onClick={closeIosModal}
-              className="w-full py-3 min-h-11 rounded-xl font-medium bg-[#0071e3] text-white"
+              className="w-full py-3 min-h-11 rounded-full font-medium bg-[#0071e3] text-white"
             >
               확인
             </button>
@@ -151,7 +151,7 @@ export function PwaInstallPrompt() {
           role="dialog"
           aria-labelledby="pwa-manual-title"
         >
-          <div className="w-full max-w-sm rounded-t-2xl bg-white shadow-xl p-4 pb-8 safe-area-pb animate-slide-up">
+          <div className="w-full max-w-sm rounded-t-3xl bg-white shadow-[0_12px_32px_rgba(47,91,160,0.16)] p-4 pb-8 safe-area-pb animate-slide-up">
             <h2 id="pwa-manual-title" className="text-base font-semibold text-slate-800 mb-2">
               앱으로 설치하기
             </h2>
@@ -167,7 +167,7 @@ export function PwaInstallPrompt() {
             <button
               type="button"
               onClick={closeManualModal}
-              className="w-full py-3 min-h-11 rounded-xl font-medium bg-[#0071e3] text-white"
+              className="w-full py-3 min-h-11 rounded-full font-medium bg-[#0071e3] text-white"
             >
               확인
             </button>

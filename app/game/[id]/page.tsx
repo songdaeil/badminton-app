@@ -9,7 +9,7 @@ export default function GamePage() {
 
   if (!id) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-[#f3f6fb] flex items-center justify-center px-4">
         <p className="text-slate-600">경기를 찾을 수 없습니다.</p>
       </div>
     );
