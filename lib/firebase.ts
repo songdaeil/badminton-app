@@ -6,6 +6,7 @@
  */
 
 import { getApp, getApps, initializeApp } from "firebase/app";
+import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
@@ -20,6 +21,21 @@ const firebaseConfig = {
 
 let db: ReturnType<typeof getFirestore> | null = null;
 let auth: ReturnType<typeof getAuth> | null = null;
+let appCheckReady = false;
+
+function initAppCheck(app: ReturnType<typeof initializeApp>): void {
+  const siteKey = process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY;
+  if (appCheckReady || !siteKey || typeof window === "undefined") return;
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(siteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+    appCheckReady = true;
+  } catch (e) {
+    console.warn("[Firebase] App Check 초기화 실패. 콘솔에서 reCAPTCHA 키와 App Check 적용을 확인하세요.", e);
+  }
+}
 
 function initFirebase(): boolean {
   if (db && auth) return true;
@@ -30,6 +46,7 @@ function initFirebase(): boolean {
   }
   try {
     const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    initAppCheck(app);
     if (!db) db = getFirestore(app);
     if (!auth) auth = getAuth(app);
     return true;

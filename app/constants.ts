@@ -15,3 +15,7 @@ export const PENDING_SHARE_KEY = "badminton_pending_share";
 
 /** 로그인 후 프로필 업로드 완료 여부 로컬 스토리지 키 */
 export const PROFILE_UPLOADED_KEY = "badminton_profile_uploaded";
+
+/** 앱 안 문의 안내 (개인정보 처리방침과 동일) */
+export const CONTACT_EMAIL = "daeilsong@gmail.com";
+

@@ -60,11 +60,18 @@ function mergeSavedHistory(a?: SavedRecord[], b?: SavedRecord[]): SavedRecord[] 
   return out;
 }
 
-function pickMatch(remote: Match | undefined, local: Match | undefined): Match | undefined {
+function scoresDiffer(a: Match, b: Match): boolean {
+  return a.score1 !== b.score1 || a.score2 !== b.score2;
+}
+
+function pickMatch(remote: Match | undefined, local: Match | undefined, isOwner: boolean): Match | undefined {
   if (!remote) return local;
   if (!local) return remote;
   const remoteSaved = matchHasScore(remote);
   const localSaved = matchHasScore(local);
+  if (remoteSaved && localSaved && scoresDiffer(remote, local) && !isOwner) {
+    return { ...remote, savedHistory: mergeSavedHistory(remote.savedHistory, local.savedHistory) };
+  }
   let winner: Match;
   if (localSaved && !remoteSaved) winner = local;
   else if (remoteSaved && !localSaved) winner = remote;
@@ -86,12 +93,12 @@ function mergeMatches(remote: Match[], local: Match[], isOwner: boolean): Match[
     return local;
   }
   if (!isOwner) {
-    return remote.map((rm) => pickMatch(rm, local.find((lm) => lm.id === rm.id)) ?? rm);
+    return remote.map((rm) => pickMatch(rm, local.find((lm) => lm.id === rm.id), false) ?? rm);
   }
   const byId = new Map<string, Match>();
   for (const m of remote) byId.set(m.id, m);
   for (const m of local) {
-    const picked = pickMatch(byId.get(m.id), m);
+    const picked = pickMatch(byId.get(m.id), m, true);
     if (picked) byId.set(m.id, picked);
   }
   const orderSrc = local.length >= remote.length ? local : remote;
@@ -110,10 +117,19 @@ function mergeMatches(remote: Match[], local: Match[], isOwner: boolean): Match[
 function mergeMembers(remote: Member[], local: Member[], isOwner: boolean, editorUid?: string | null): Member[] {
   if (isOwner) {
     const remoteById = new Map(remote.map((m) => [m.id, m]));
-    return local.map((lm) => {
+    const localLinked = new Set(local.map((m) => m.linkedUid).filter((u): u is string => Boolean(u)));
+    const merged = local.map((lm) => {
       const rm = remoteById.get(lm.id);
       return rm ? { ...rm, ...lm, linkedUid: lm.linkedUid ?? rm.linkedUid } : lm;
     });
+    const localIds = new Set(merged.map((m) => m.id));
+    for (const rm of remote) {
+      if (rm.linkedUid && !localLinked.has(rm.linkedUid) && !localIds.has(rm.id)) {
+        merged.push(rm);
+        localIds.add(rm.id);
+      }
+    }
+    return merged;
   }
   const result = [...remote];
   if (!editorUid) return result;
@@ -140,15 +156,20 @@ export function mergeGameData(remote: GameData, local: GameData, editorUid?: str
   const members = mergeMembers(remote.members ?? [], local.members ?? [], isOwner, editorUid);
 
   const scoredIds = new Set(matches.filter(matchHasScore).map((m) => m.id));
-  const playing = [...new Set([...(remote.playingMatchIds ?? []), ...(local.playingMatchIds ?? [])])].filter(
-    (id) => !scoredIds.has(id)
-  );
+  const remotePlayAt = remote.playingUpdatedAt ?? "";
+  const localPlayAt = local.playingUpdatedAt ?? "";
+  const playingSrc =
+    localPlayAt || remotePlayAt
+      ? (localPlayAt >= remotePlayAt ? local : remote)
+      : local;
+  const playing = [...new Set(playingSrc.playingMatchIds ?? [])].filter((id) => !scoredIds.has(id));
 
   return {
     ...remote,
     members,
     matches,
     playingMatchIds: playing,
+    playingUpdatedAt: playingSrc.playingUpdatedAt ?? remote.playingUpdatedAt ?? local.playingUpdatedAt,
     createdAt: remote.createdAt ?? local.createdAt,
     createdBy: remote.createdBy ?? local.createdBy,
     createdByName: remote.createdByName ?? local.createdByName,
@@ -214,10 +235,16 @@ export async function addSharedGame(data: GameData): Promise<string | null> {
   }
 }
 
-export async function setSharedGame(shareId: string, data: GameData): Promise<boolean> {
+export interface SharedGameWriteResult {
+  ok: boolean;
+  conflicts: string[];
+}
+
+export async function setSharedGame(shareId: string, data: GameData): Promise<SharedGameWriteResult> {
   const ok = await ensureFirebase();
   const db = getDb();
-  if (!ok || !db) return false;
+  if (!ok || !db) return { ok: false, conflicts: [] };
+  const conflicts: string[] = [];
   try {
     const ref = doc(db, COLLECTION, shareId);
     await runTransaction(db, async (transaction) => {
@@ -226,7 +253,19 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
       if (snap.exists()) {
         const remote = fromStored(shareId, snap.data()?.gameData);
         const editorUid = getAuthInstance()?.currentUser?.uid ?? null;
-        if (remote) merged = mergeGameData(remote, data, editorUid);
+        const ownerUid = remote?.createdByUid ?? data.createdByUid;
+        const isOwner = Boolean(editorUid && ownerUid && editorUid === ownerUid);
+        if (remote) {
+          conflicts.length = 0;
+          for (const lm of data.matches ?? []) {
+            if (!matchHasScore(lm)) continue;
+            const rm = (remote.matches ?? []).find((m) => m.id === lm.id);
+            if (rm && matchHasScore(rm) && scoresDiffer(rm, lm) && !isOwner) {
+              conflicts.push(lm.id);
+            }
+          }
+          merged = mergeGameData(remote, data, editorUid);
+        }
       }
       const payload = toStoredData(merged);
       const size = getFirestorePayloadSize(merged);
@@ -239,15 +278,15 @@ export async function setSharedGame(shareId: string, data: GameData): Promise<bo
         createdByUid: merged.createdByUid ?? data.createdByUid ?? snap.data()?.createdByUid ?? null,
       });
     });
-    return true;
+    return { ok: true, conflicts };
   } catch (e) {
     console.error("[Firebase] setSharedGame 실패:", e);
-    return false;
+    return { ok: false, conflicts: [] };
   }
 }
 
 /** 공유 경기 데이터일 때만 Firestore에 업로드. shareId 없거나 sync 불가 시 아무 작업 안 함. */
-export function uploadSharedGameIfNeeded(data: GameData): Promise<boolean | void> {
+export function uploadSharedGameIfNeeded(data: GameData): Promise<SharedGameWriteResult | void> {
   if (!data.shareId || !isSyncAvailable()) return Promise.resolve();
   return setSharedGame(data.shareId, data);
 }
@@ -287,30 +326,7 @@ export async function getSharedGameIdsByUid(uid: string): Promise<string[]> {
     const q = query(colRef, where("createdByUid", "==", uid));
     const snap = await getDocs(q);
     const fromQuery = snap.docs.map((d) => d.id);
-    if (fromQuery.length > 0) return fromQuery;
-
-    // 쿼리 결과가 없으면 기존 문서(최상위 createdByUid 없음)일 수 있음 → gameData 내부로 폴백
-    const allSnap = await getDocs(colRef);
-    const matched: { id: string; needsMigration: boolean }[] = [];
-    for (const d of allSnap.docs) {
-      const data = d.data();
-      const topUid = data.createdByUid;
-      const innerUid = data?.gameData && typeof data.gameData === "object" ? (data.gameData as { createdByUid?: string }).createdByUid : undefined;
-      const isMatch = topUid === uid || innerUid === uid;
-      if (!isMatch) continue;
-      matched.push({ id: d.id, needsMigration: topUid === undefined || topUid === null });
-    }
-    const ids = matched.map((m) => m.id);
-    for (const { id, needsMigration } of matched) {
-      if (needsMigration) {
-        try {
-          await setDoc(doc(db, COLLECTION, id), { createdByUid: uid }, { merge: true });
-        } catch {
-          // 무시: 다음 로드 시 다시 시도됨
-        }
-      }
-    }
-    return ids;
+    return fromQuery;
   } catch (e) {
     console.error("[Firebase] getSharedGameIdsByUid 실패:", e);
     return [];

@@ -113,6 +113,8 @@ export interface GameData {
   createdByUid?: string | null;
   /** 진행으로 체크된 매치 id 목록 (목록 나갔다 와도 유지) */
   playingMatchIds?: string[] | null;
+  /** 진행 표시를 마지막으로 바꾼 시각. 늦은 쪽을 유지해 다른 사람 저장이 진행을 되돌리지 않음 */
+  playingUpdatedAt?: string | null;
   /** 이 경기를 불러올 때 사용한 공유 쿼리(?share=xxx). 동일 링크 재진입 시 중복 추가 방지용 */
   importedFromShare?: string | null;
   /** 실시간 동기화용 Firestore 문서 id. 있으면 이 경기는 공유 문서와 동기화됨 */
@@ -133,6 +135,7 @@ export function buildGameDataPayload(existing: GameData, overrides: Partial<Game
     createdByName: existing.createdByName ?? overrides.createdByName ?? undefined,
     createdByUid: existing.createdByUid ?? overrides.createdByUid ?? undefined,
     playingMatchIds: overrides.playingMatchIds !== undefined ? overrides.playingMatchIds : existing.playingMatchIds,
+    playingUpdatedAt: overrides.playingUpdatedAt !== undefined ? overrides.playingUpdatedAt : existing.playingUpdatedAt,
     importedFromShare: existing.importedFromShare ?? overrides.importedFromShare ?? undefined,
     shareId: overrides.shareId !== undefined ? overrides.shareId : (existing.shareId ?? undefined),
   };
@@ -204,6 +207,7 @@ export function loadGame(gameId: string | null): GameData {
           createdByName: typeof parsed.createdByName === "string" ? parsed.createdByName : undefined,
           createdByUid: typeof parsed.createdByUid === "string" ? parsed.createdByUid : undefined,
           playingMatchIds: Array.isArray(parsed.playingMatchIds) && parsed.playingMatchIds.every((x) => typeof x === "string") ? parsed.playingMatchIds : undefined,
+          playingUpdatedAt: typeof parsed.playingUpdatedAt === "string" ? parsed.playingUpdatedAt : undefined,
           importedFromShare: typeof parsed.importedFromShare === "string" ? parsed.importedFromShare : undefined,
           shareId: typeof parsed.shareId === "string" ? parsed.shareId : undefined,
         };
@@ -242,6 +246,7 @@ export function saveGame(gameId: string | null, data: GameData): void {
       createdByName: data.createdByName ?? null,
       createdByUid: data.createdByUid ?? null,
       playingMatchIds: data.playingMatchIds ?? null,
+      playingUpdatedAt: data.playingUpdatedAt ?? null,
       importedFromShare: data.importedFromShare ?? null,
       shareId: data.shareId ?? null,
     })

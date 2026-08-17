@@ -2,11 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { addGameToList, buildGameDataPayload, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
+import { addGameToList, buildGameDataPayload, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, removeGameFromList, saveGame, saveGameList, saveMyInfo } from "@/lib/game-storage";
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
 import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
 import { getCurrentUserUid, getRemoteProfile, setRemoteProfile } from "@/lib/profile-sync";
-import { addSharedGame, deleteSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, shouldSkipSharedGameUpload, subscribeSharedGame, uploadSharedGameIfNeeded } from "@/lib/sync";
+import { deleteCurrentAccount } from "@/lib/account";
+import { addSharedGame, deleteSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, shouldSkipSharedGameUpload, subscribeSharedGame, uploadSharedGameIfNeeded, type SharedGameWriteResult } from "@/lib/sync";
 import {
   confirmPhoneCode,
   getCurrentPhoneUser,
@@ -32,8 +33,22 @@ import {
   MINUTES_PER_21PT_GAME,
   TIME_OPTIONS_30MIN,
 } from "@/lib/game-mode-utils";
-import { LOGIN_GATE_KEY, NAV_ORDER, PRIMARY, PRIMARY_LIGHT, PENDING_SHARE_KEY, PROFILE_UPLOADED_KEY } from "@/app/constants";
+import { LOGIN_GATE_KEY, NAV_ORDER, PRIMARY, PRIMARY_LIGHT, PENDING_SHARE_KEY, PROFILE_UPLOADED_KEY, CONTACT_EMAIL } from "@/app/constants";
 import { AddMemberForm } from "@/app/components/AddMemberForm";
+
+function applySharedWriteResult(
+  result: SharedGameWriteResult | void,
+  data: GameData | undefined,
+  setBytes: (n: number) => void,
+  setToast: (s: string | null) => void
+) {
+  if (!result?.ok) return;
+  if (data) setBytes(getFirestorePayloadSize(data));
+  if (result.conflicts.length > 0) {
+    setToast("다른 사람이 먼저 저장한 점수가 있어 그 매치는 덮지 않았습니다.");
+    setTimeout(() => setToast(null), 4000);
+  }
+}
 
 /** 경기 방식 카테고리 (상단 탭). 이미지 참고: 복식/단식/대항전/단체 등 */
 const GAME_CATEGORIES = [
@@ -62,6 +77,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => ({ ...DEFAULT_GAME_SETTINGS }));
   /** 사용자가 선택한 '진행중' 매치 id 목록 (여러 코트 병렬 진행 가능) */
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
+  const [playingUpdatedAt, setPlayingUpdatedAt] = useState<string | undefined>(undefined);
   /** 전화 인증된 Firebase 세션이 있을 때만 true. 세션 깃발이 아니라 Auth 상태가 기준 */
   const [loginGatePassed, setLoginGatePassed] = useState(false);
   /** 오프라인 미지원: 네트워크 연결 여부. false면 쓰기 차단·배너 표시 */
@@ -110,6 +126,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [recordDetailClosing, setRecordDetailClosing] = useState(false);
   /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false);
   /** 경기 생성 후 명단이 바뀌지 않았으면 버튼 비활성화. 명단 변경 시 true로 바꿔 다시 활성화 */
   const [rosterChangedSinceGenerate, setRosterChangedSinceGenerate] = useState(true);
   /** Firestore에서 내려온 데이터 적용 시 다음 save 시 Firestore 업로드 스킵 */
@@ -203,6 +220,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setGameSettings({ ...DEFAULT_GAME_SETTINGS });
       setScoreInputs({});
       setSelectedPlayingMatchIds([]);
+      setPlayingUpdatedAt(undefined);
       setMyProfileMemberId(null);
       setHighlightMemberId(null);
       setRosterChangedSinceGenerate(true);
@@ -221,7 +239,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
           const remoteSaved = (remote.matches ?? []).filter((m) => m.score1 != null || m.score2 != null).length;
           if (localSaved > remoteSaved) {
             saveGame(id, { ...data, shareId: data.shareId });
-            uploadSharedGameIfNeeded({ ...data, shareId: data.shareId }).catch(() => {});
+            uploadSharedGameIfNeeded({ ...data, shareId: data.shareId })
+              .then((result) => applySharedWriteResult(result, { ...data, shareId: data.shareId }, setLastFirestoreUploadBytes, setShareToast))
+              .catch(() => {});
           } else {
             saveGame(id, { ...remote, shareId: data.shareId });
             data = { ...remote, shareId: data.shareId };
@@ -248,6 +268,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         const matchIdSet = new Set(loadedMatches.map((m) => String(m.id)));
         const validPlayingIds = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
         setSelectedPlayingMatchIds(validPlayingIds);
+        setPlayingUpdatedAt(data.playingUpdatedAt ?? undefined);
         setRosterChangedSinceGenerate(loadedMatches.length === 0);
       }
       setHighlightMemberId(null);
@@ -287,7 +308,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
       }
       const data = loadGame(leavingId);
       saveGame(leavingId, data);
-      uploadSharedGameIfNeeded(data).catch(() => {});
+      uploadSharedGameIfNeeded(data)
+        .then((result) => applySharedWriteResult(result, data, setLastFirestoreUploadBytes, setShareToast))
+        .catch(() => {});
     };
   }, [effectiveGameId]);
 
@@ -354,6 +377,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         const matchIdSet = new Set(remote.matches.map((m) => String(m.id)));
         const validPlayingIds = (remote.playingMatchIds ?? []).filter((id) => matchIdSet.has(id));
         setSelectedPlayingMatchIds(validPlayingIds);
+        setPlayingUpdatedAt(remote.playingUpdatedAt ?? undefined);
       }
         },
         undefined,
@@ -593,8 +617,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   /** 경기 목록 상세·프로필 수정 열림 시 캐러셀 스와이프 무시용 ref 동기화 */
   useEffect(() => {
-    overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing);
-  }, [selectedGameId, profileEditOpen, profileEditClosing]);
+    overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing || showWithdrawConfirm);
+  }, [selectedGameId, profileEditOpen, profileEditClosing, showWithdrawConfirm]);
 
   /** 현재 탭 섹션 새로고침 (당겨서 새로고침 시 호출) */
   const doSectionRefresh = useCallback(() => {
@@ -741,8 +765,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
       gameSettings: isGameSummaryEditable ? gameSettings : (existing.gameSettings ?? gameSettings),
       myProfileMemberId: myProfileMemberId ?? undefined,
       playingMatchIds: selectedPlayingMatchIds,
+      playingUpdatedAt,
     });
-    if (shouldSkipSharedGameUpload(payload, existing)) return;
     /** 로컬 저장 후, 공유 경기(shareId)면 Firestore 업로드. 빈 payload로 로컬/서버 덮어쓰기 방지(데이터 유실 방지). */
     const runSave = (id: string, data: GameData) => {
       const localBefore = loadGame(id);
@@ -750,7 +774,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       saveGame(id, data);
       if (!skipNextFirestorePush.current) {
         uploadSharedGameIfNeeded(data)
-          .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
+          .then((result) => applySharedWriteResult(result, data, setLastFirestoreUploadBytes, setShareToast))
           .catch(() => {});
       } else {
         skipNextFirestorePush.current = false;
@@ -781,7 +805,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         firestorePushTimeoutRef.current = null;
       }
     };
-  }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, myInfo.name, myInfo.gender, myInfo.grade, mounted, isGameSummaryEditable]);
+  }, [effectiveGameId, members, matches, gameName, gameModeId, gameSettings, myProfileMemberId, selectedPlayingMatchIds, playingUpdatedAt, myInfo.name, myInfo.gender, myInfo.grade, mounted, isGameSummaryEditable]);
 
 
   /** 경기 생성 후 목록에 추가. 서버(sharedGames) 저장 성공 시에만 목록에 반영. 로그인·네트워크 필수. 오프라인 미지원. */
@@ -892,11 +916,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
     if (db) {
       if (data.shareId) {
         const payload = { ...data, shareId: data.shareId };
-        const ok = (await uploadSharedGameIfNeeded(payload)) === true;
+        const result = await uploadSharedGameIfNeeded(payload);
+        const ok = result?.ok === true;
         shareParam = ok ? data.shareId : encodeGameForShare(data);
         if (ok) {
           saveGame(targetGameId, payload);
-          setLastFirestoreUploadBytes(getFirestorePayloadSize(payload));
+          applySharedWriteResult(result, payload, setLastFirestoreUploadBytes, setShareToast);
         } else firebaseFailed = true;
       } else {
         const newId = await addSharedGame(data);
@@ -964,6 +989,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
     setMatches(newMatches);
     setScoreInputs(inputs);
     setSelectedPlayingMatchIds([]);
+    const playAt = new Date().toISOString();
+    setPlayingUpdatedAt(playAt);
     setMembers((prev) =>
       prev.map((m) => ({ ...m, wins: 0, losses: 0, pointDiff: 0 }))
     );
@@ -979,10 +1006,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
       gameSettings,
       myProfileMemberId: myProfileMemberId ?? undefined,
       playingMatchIds: [],
+      playingUpdatedAt: playAt,
     });
     saveGame(effectiveGameId, payload);
     uploadSharedGameIfNeeded(payload)
-      .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
+      .then((result) => applySharedWriteResult(result, payload, setLastFirestoreUploadBytes, setShareToast))
       .catch(() => {});
   }, [effectiveGameId, gameModeId, gameName, gameSettings, members, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, isGameOwner]);
 
@@ -1029,6 +1057,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setMatches(nextMatches);
       setMembers((prev) => recomputeMemberStatsFromMatches(prev, nextMatches));
       setSelectedPlayingMatchIds((prev) => prev.filter((id) => id !== matchId));
+      setPlayingUpdatedAt(now);
       setScoreInputs((prev) => ({ ...prev, [matchId]: { s1: String(s1), s2: String(s2) } }));
 
       const membersToSave = applyMyProfileToMembers(nextMembers, myProfileMemberId, myProfileForMembers);
@@ -1040,6 +1069,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         gameSettings,
         myProfileMemberId: myProfileMemberId ?? undefined,
         playingMatchIds: (existing.playingMatchIds ?? selectedPlayingMatchIds).filter((id) => id !== matchId),
+        playingUpdatedAt: now,
       });
       saveGame(effectiveGameId, payload);
       if (saveResultFirestoreTimerRef.current) clearTimeout(saveResultFirestoreTimerRef.current);
@@ -1048,7 +1078,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         saveResultFirestoreTimerRef.current = null;
         const data = loadGame(gameIdToUpload);
         uploadSharedGameIfNeeded(data)
-          .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(data)); })
+          .then((result) => applySharedWriteResult(result, data, setLastFirestoreUploadBytes, setShareToast))
           .catch(() => {});
       }, SAVE_RESULT_FIRESTORE_DEBOUNCE_MS);
     },
@@ -1240,6 +1270,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     const match = matches.find((m) => m.id === matchId);
     if (!match) return;
     playingSelectionCooldownUntilRef.current = Date.now() + 2000;
+    setPlayingUpdatedAt(new Date().toISOString());
     const thisPlayerIds = new Set(getMatchPlayerIds(match));
 
     setSelectedPlayingMatchIds((prev) => {
@@ -1505,7 +1536,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               선택한 경기 방식이 경기 목록에 추가됩니다. 공유 링크를 열면 경기를 볼 수 있고, 명단에 「프로필로 나 추가」하면 참여 경기로 내 목록에 남습니다. 만든이는 요약·명단·대진을 관리하고, 참여자는 점수와 진행 현황을 함께 기록합니다.
             </p>
             <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-              만든이가 경기를 삭제하면 다른 사람의 목록에서도 사라집니다. 참여자는 목록에서만 빼며 원본은 지우지 않습니다.
+              만든이가 경기를 삭제하면 다른 사람의 목록에서도 사라집니다. 참여자는 목록에서만 빼며 원본은 지우지 않습니다. 같은 매치에 점수가 이미 있으면 참여자는 덮지 않고, 만든이만 수정할 수 있습니다.
             </p>
             <button
               type="button"
@@ -1514,6 +1545,69 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               닫기
             </button>
+          </div>
+        </>
+      )}
+
+      {showWithdrawConfirm && (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowWithdrawConfirm(false)} />
+          <div
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-xl border border-[#e8e8ed]"
+            onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+            onTouchEnd={(e) => {
+              const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
+              const dx = e.changedTouches[0].clientX - overlayTouchStartRef.current.x;
+              if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowWithdrawConfirm(false);
+            }}
+          >
+            <p className="text-sm text-slate-800 font-medium">계정을 탈퇴할까요?</p>
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              프로필, 경기 목록, 내가 만든 공유 경기가 삭제됩니다. 참여만 한 경기의 원본은 남습니다.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowWithdrawConfirm(false)}
+                className="flex-1 py-2 rounded-xl text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const result = await deleteCurrentAccount();
+                  if (!result.ok) {
+                    setShareToast(result.message ?? "탈퇴에 실패했습니다.");
+                    setTimeout(() => setShareToast(null), 4000);
+                    setShowWithdrawConfirm(false);
+                    return;
+                  }
+                  for (const id of loadGameList()) {
+                    removeGameFromList(id);
+                  }
+                  saveGameList([]);
+                  refreshListDisplay();
+                  const cleared = { ...DEFAULT_MYINFO };
+                  setMyInfo(cleared);
+                  saveMyInfo(cleared);
+                  setHasUploadedProfileAfterLogin(false);
+                  setLoginGatePassed(false);
+                  setAuthUid(null);
+                  setPhoneStep("idle");
+                  setPhoneNumberInput("");
+                  setPhoneCodeInput("");
+                  setPhoneError("");
+                  phoneConfirmationResultRef.current = null;
+                  setShowWithdrawConfirm(false);
+                  setShareToast("계정을 탈퇴했습니다.");
+                  setTimeout(() => setShareToast(null), 3000);
+                }}
+                className="flex-1 py-2 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                탈퇴
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -1980,11 +2074,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   gameSettings: { ...baseSettings, date: dateToSave, time: timeToSave, location: locationToSave, scoreLimit: scoreLimitToSave },
                   myProfileMemberId: myProfileMemberId ?? undefined,
                   playingMatchIds: selectedPlayingMatchIds,
+                  playingUpdatedAt,
                 });
                 saveGame(effectiveGameId, payload);
                 if (typeof navigator !== "undefined" && navigator.onLine) {
                   uploadSharedGameIfNeeded(payload)
-                    .then((ok) => { if (ok) setLastFirestoreUploadBytes(getFirestorePayloadSize(payload)); })
+                    .then((result) => applySharedWriteResult(result, payload, setLastFirestoreUploadBytes, setShareToast))
                     .catch(() => {});
                 } else {
                   setShareToast("저장되었습니다. 네트워크 연결 후 동기화됩니다.");
@@ -2704,6 +2799,43 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </div>
               </div>
             </div>
+
+            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
+              <div className="px-3 py-3 space-y-2">
+                <h3 className="text-sm font-semibold text-slate-800">사용법</h3>
+                <ul className="text-xs text-slate-600 leading-relaxed list-disc pl-4 space-y-1">
+                  <li>전화번호로 인증 문자를 받아 입장합니다.</li>
+                  <li>경기 목록에서 공유하면 링크를 받은 사람이 같은 경기를 봅니다.</li>
+                  <li>명단의 「프로필로 나 추가」로 참여하면 내 목록에 남고 점수를 기록할 수 있습니다.</li>
+                  <li>점수는 참여자가 함께 저장합니다. 이미 저장된 매치는 만든이만 고칩니다.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
+              <div className="px-3 py-3 space-y-2">
+                <h3 className="text-sm font-semibold text-slate-800">문의</h3>
+                <a href={`mailto:${CONTACT_EMAIL}`} className="text-sm text-[#0071e3] hover:underline break-all">
+                  {CONTACT_EMAIL}
+                </a>
+              </div>
+            </div>
+
+            {loginGatePassed ? (
+              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
+                <div className="px-3 py-3 space-y-2">
+                  <h3 className="text-sm font-semibold text-slate-800">계정</h3>
+                  <p className="text-xs text-slate-500">탈퇴하면 이 계정의 프로필, 경기 목록, 내가 만든 공유 경기가 삭제됩니다.</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowWithdrawConfirm(true)}
+                    className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors btn-tap"
+                  >
+                    계정 탈퇴
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {/* 프로필 수정 (경기 이사 섹션 하위 창) */}
             {(profileEditOpen || profileEditClosing) && (
