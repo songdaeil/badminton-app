@@ -20,6 +20,16 @@ export function rosterOutOfSyncWithDraw(members: Member[], matches: Match[]): bo
   return members.some((m) => !inDraw.has(m.id));
 }
 
+/** 대진에 실제로 들어 있는 사람 수. 목록 인원 표시는 명단이 아니라 이 값을 쓴다. */
+export function uniqueDrawPlayerCount(matches?: Match[] | null): number {
+  const ids = new Set<string>();
+  for (const match of matches ?? []) {
+    for (const p of match.team1.players) if (p?.id) ids.add(p.id);
+    for (const p of match.team2.players) if (p?.id) ids.add(p.id);
+  }
+  return ids.size;
+}
+
 /** 내 연동 칸만 나의 프로필 멤버로 본다. 공유 문서의 myProfileMemberId(만든이 칸)를 쓰지 않는다. */
 export function resolveMyProfileMemberId(
   members: Member[],

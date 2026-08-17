@@ -17,7 +17,7 @@
 
 ## 1. 프로젝트 소개 및 실행
 
-배드민턴 경기 관리 앱(Next.js)입니다. 경기 방식 선택, 명단·대진 관리, 경기 결과 입력·랭킹, 공유 링크(Firestore), 이메일/전화번호 로그인·경기 목록·프로필 동기화를 지원합니다.
+배드민턴 경기 관리 앱(Next.js)입니다. 경기 방식 선택, 명단·대진 관리, 경기 결과 입력·랭킹, 공유 링크(Firestore), 전화번호 로그인·경기 목록·프로필 동기화를 지원합니다.
 
 **제품 방향**
 - **모든 경기는 서버(Firestore)에 저장**: 경기 생성/목록 추가 시 항상 Firestore(sharedGames)에 저장됩니다. 로컬 전용(shareId 없음) 경기는 없습니다.
@@ -53,7 +53,7 @@ flowchart TB
     Main[메인 3탭]
   end
   Start --> Gate
-  Gate -->|이메일/전화| Main
+  Gate -->|전화| Main
   Main --> Setting[경기 세팅]
   Main --> Record[경기 목록/상세]
   Main --> MyInfo[나의 정보]
@@ -66,7 +66,7 @@ flowchart TB
 
 | 시나리오 | 흐름 | 관련 코드 |
 |----------|------|-----------|
-| 앱 진입·로그인 | 로그인 게이트(이메일/전화) → 메인(경기 방식·경기 목록·나의 정보 탭) | page.tsx 로그인 게이트, onAuthStateChanged, 나의 정보 탭 |
+| 앱 진입·로그인 | 로그인 게이트(전화) → 메인(경기 방식·경기 목록·나의 정보 탭) | page.tsx 로그인 게이트, onAuthStateChanged, 나의 정보 탭 |
 | 경기 세팅 | 경기 방식 선택 → 명단 추가 → 경기 생성 → 목록에 추가 | page.tsx 경기 방식 섹션, AddMemberForm, doMatch, addGameToRecord |
 | 경기 목록·상세 | 목록에서 경기 선택 → 상세(요약·명단·대진·경기 현황·랭킹) → 점수 입력·저장 | page.tsx record 섹션, loadGameList/loadGame, saveResult |
 | 공유 | 공유 버튼 → Firestore 업로드/기존 shareId 사용 → 링크 복사 → 다른 기기에서 링크로 진입 | handleShareCard, processShareAndOpenDetail, subscribeSharedGame |
@@ -77,14 +77,12 @@ flowchart TB
 
 ### 앱 진입·로그인
 
-앱 접속 후 로그인 게이트에서 이메일 또는 전화로 로그인하면 메인(경기 방식·경기 목록·나의 정보 탭)으로 진입합니다.
+앱 접속 후 로그인 게이트에서 전화번호로 본인 확인하면 메인(경기 방식·경기 목록·나의 정보 탭)으로 진입합니다.
 
 ```mermaid
 flowchart LR
   A[앱 접속] --> B[로그인 게이트]
-  B --> C{선택}
-  C -->|이메일| D[메인]
-  C -->|전화| D
+  B --> D[메인]
   D --> E[경기 방식 탭]
   D --> F[경기 목록 탭]
   D --> G[나의 정보 탭]
@@ -105,7 +103,7 @@ flowchart LR
 
 목록에서 경기를 선택하면 상세 화면(요약·명단·대진·경기 현황·랭킹)이 열리고, 점수 입력 후 저장합니다.
 
-- **목록에 보이는 경기**: **내가 만든 경기**와 **내가 참여하는 경기**만 경기 목록에 표시됩니다. 공유 링크(`?share=`)로 열어도 해당 경기는 목록에 자동 추가되지 않으며, 해당 링크에서만 보기 가능합니다.
+- **목록에 보이는 경기**: **내가 만든 경기**, **참여한 경기**, 점수 후 링크로 연 **보기만** 경기가 목록에 표시됩니다. 공유 링크(`?share=`)를 열면 내 목록에 들어갑니다. 대진 전이면 명단에도 들어가고, 대진 후면 명단에만 들어가며 만든이가 대진을 다시 만들어야 점수를 기록할 수 있습니다. 점수가 있으면 명단에 넣지 않고 보기만 됩니다.
 - **만든이 권한**: 경기 요약(이름·날짜·시간·장소·승점)은 **만든이(createdByUid와 일치하는 사용자)만 수정 가능**합니다.
 
 ```mermaid
@@ -118,7 +116,7 @@ flowchart LR
 
 ### 공유
 
-공유 버튼 클릭 시 기존 shareId가 있으면 재사용, 없으면 Firestore에 업로드한 뒤 링크를 복사합니다. 다른 사용자가 해당 링크를 열면 경기 상세를 **보기만** 할 수 있으며, 링크만으로는 받는 쪽 경기 목록에 추가되지 않습니다.
+공유 버튼 클릭 시 기존 shareId가 있으면 재사용, 없으면 Firestore에 업로드한 뒤 링크를 복사합니다. 받은 사람이 링크를 열면 내 목록에 들어갑니다. 대진 전이면 명단에도 들어가고, 대진 후면 명단에만 들어가며 만든이가 대진을 다시 만들어야 점수를 기록할 수 있습니다. 점수가 있으면 명단에 넣지 않고 보기만 됩니다.
 
 ```mermaid
 flowchart LR
@@ -197,7 +195,7 @@ flowchart LR
 | **lib/match-stats.ts** | `lib/match-stats.ts` | 승패·득실차 계산(recomputeMemberStatsFromMatches, buildRankingFromMatchesOnly). |
 | **lib/sync.ts** | `lib/sync.ts` | Firestore 공유. sharedGames·userGameLists: getSharedGame, setSharedGame, subscribeSharedGame, getUserGameList, setUserGameList, subscribeUserGameList. |
 | **lib/profile-sync.ts** | `lib/profile-sync.ts` | 로그인 UID 기준 프로필 원격 조회·저장(getRemoteProfile, setRemoteProfile). |
-| **lib/email-auth.ts** | `lib/email-auth.ts` | 이메일 로그인·회원가입·인증(signIn, signUp, sendVerification, subscribeEmailAuthState 등). |
+| **lib/email-auth.ts** | `lib/email-auth.ts` | 예전 이메일 로그인 코드. 앱 입장은 전화만 사용. |
 | **lib/phone-auth.ts** | `lib/phone-auth.ts` | 전화번호 로그인(startPhoneAuth, confirmPhoneCode, getCurrentPhoneUser 등). |
 | **node_modules** | (패키지 디렉터리) | `npm install`로 설치된 외부 패키지. Git 추적 대상 아님. |
 | **public** | (정적 파일 루트) | 빌드 없이 그대로 서비스되는 정적 파일(이미지, HTML, 검증 파일 등). |
@@ -293,7 +291,7 @@ flowchart LR
 | **sync.ts** | Firestore 공유(sharedGames, userGameLists): getSharedGame, setSharedGame, subscribeSharedGame, getUserGameList, setUserGameList, subscribeUserGameList |
 | **firebase.ts** | Firebase 앱·Auth·Firestore 초기화 |
 | **profile-sync.ts** | 프로필 원격 조회/저장(getRemoteProfile, setRemoteProfile) |
-| **email-auth.ts** | 이메일 로그인/회원가입/인증 |
+| **email-auth.ts** | 예전 이메일 로그인 코드. 앱 입장은 전화만 사용 |
 | **phone-auth.ts** | 전화번호 로그인 |
 
 ### 앱 전용 (app/)
@@ -336,7 +334,7 @@ flowchart LR
 
 ## 4. Firebase 설정
 
-이 앱에서는 **Firestore**(경기 공유·경기 목록·프로필 동기화)와 **Authentication**(이메일/전화번호 로그인)을 사용합니다.
+이 앱에서는 **Firestore**(경기 공유·경기 목록·프로필 동기화)와 **Authentication**(전화번호 로그인)을 사용합니다.
 
 ### 체크리스트
 
@@ -391,7 +389,7 @@ service cloud.firestore {
 ```
 
 - **sharedGames**: 링크를 아는 사람만 해당 경기 문서에 접근합니다. shareId는 예측하기 어려운 랜덤 문자열입니다.
-- **users**: 로그인한 사용자만 자신의 문서(`/users/{본인 uid}`)를 읽고 쓸 수 있습니다. 같은 이메일/전화번호로 다른 기기에서 로그인하면 동일한 프로필이 표시됩니다.
+- **users**: 로그인한 사용자만 자신의 문서(`/users/{본인 uid}`)를 읽고 쓸 수 있습니다. 같은 전화번호로 다른 기기에서 로그인하면 동일한 프로필이 표시됩니다.
 - **userGameLists**: 로그인한 사용자만 자신의 경기 목록 문서(`/userGameLists/{본인 uid}`)를 읽고 쓸 수 있습니다. 경기 목록 동기화에 필요합니다.
 
 ### 4-4. 웹 앱 등록 및 설정값 복사
@@ -417,8 +415,7 @@ service cloud.firestore {
 1. 왼쪽 메뉴 **빌드** → **Authentication** 클릭
 2. **시작하기** 클릭(처음이면)
 3. **Sign-in method** 탭에서 사용할 방법 **사용 설정**:
-   - **이메일/비밀번호**: 클릭 → **사용 설정** 켜기 → **저장** (Blaze 요금제 불필요. 가입 시 인증 메일 발송, 인증 완료 후만 활동 가능해 유령 회원 방지)
-   - **전화번호**: 클릭 → **사용 설정** 켜기 → **저장** (Blaze 요금제 필요)
+   - **전화번호**: 클릭 → **사용 설정** 켜기 → **저장** (Blaze 요금제 필요. 앱 입장은 전화만 사용)
 
 #### 승인된 도메인 추가 (auth/configuration-not-found 방지)
 
