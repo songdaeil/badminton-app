@@ -51,12 +51,28 @@ function applySharedWriteResult(
 
 function shareLinkCopiedMessage(data: GameData): string {
   if (gameHasRecordedScore(data.matches)) {
-    return "공유 링크가 복사되었습니다. 받은 사람은 목록에 넣고 볼 수 있습니다.";
+    return "카톡에 붙여 넣어 보내 주세요. 받은 사람은 목록에 넣고 볼 수 있습니다.";
   }
   if ((data.matches ?? []).length > 0) {
-    return "공유 링크가 복사되었습니다. 받은 사람은 명단에 들어가고, 대진에 넣으려면 만든이가 대진을 다시 만들어야 합니다.";
+    return "카톡에 붙여 넣어 보내 주세요. 받은 사람은 명단에 들어가고, 대진에 넣으려면 대진을 다시 만들어야 합니다.";
   }
-  return "공유 링크가 복사되었습니다. 받은 사람은 명단과 목록에 들어갑니다.";
+  return "카톡에 붙여 넣어 보내 주세요. 받은 사람은 명단과 목록에 들어갑니다.";
+}
+
+function parseShareParam(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  try {
+    const u = new URL(t);
+    const q = u.searchParams.get("share");
+    if (q) return q;
+  } catch {
+    /* 링크가 아니면 아래 규칙 */
+  }
+  const m = t.match(/share=([^&\s]+)/);
+  if (m) return decodeURIComponent(m[1]);
+  if (/^[A-Za-z0-9_-]{8,}$/.test(t)) return t;
+  return null;
 }
 
 /** 내 프로필을 명단에 넣는다. 이미 있으면 그 칸을 나로 표시하고, 점수가 있거나 가득 차면 넣지 않는다. */
@@ -142,10 +158,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const phoneConfirmationResultRef = useRef<ConfirmationResult | null>(null);
   /** 하단 네비로 이동하는 화면: setting(경기 세팅) | record(경기 목록) | myinfo(나의 정보). 새로고침 시 마지막 탭 복원 */
   const [navView, setNavView] = useState<"setting" | "record" | "myinfo">(() => {
-    if (typeof window === "undefined") return "setting";
+    if (typeof window === "undefined") return "record";
     const saved = sessionStorage.getItem("badminton_nav_view");
-    if (saved === "record" || saved === "myinfo") return saved;
-    return "setting";
+    if (saved === "setting" || saved === "myinfo" || saved === "record") return saved;
+    return "record";
   });
   /** 경기 목록에서 선택한 경기 id (목록에서 하나 고르면 이 경기 로드) */
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
@@ -175,6 +191,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
   /** 경기 생성 전 확인 모달 (종료/진행 중인 경기 있을 때) */
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false);
+  const [detailStep, setDetailStep] = useState<"people" | "draw" | "score">("people");
+  const [joinLinkOpen, setJoinLinkOpen] = useState(false);
+  const [joinLinkInput, setJoinLinkInput] = useState("");
   /** 경기 생성 후 명단이 바뀌지 않았으면 버튼 비활성화. 명단 변경 시 true로 바꿔 다시 활성화 */
   const [rosterChangedSinceGenerate, setRosterChangedSinceGenerate] = useState(true);
   /** Firestore에서 내려온 데이터 적용 시 다음 save 시 Firestore 업로드 스킵 */
@@ -677,6 +696,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   const navIndex = NAV_ORDER.indexOf(navView);
 
+  useEffect(() => {
+    if (selectedGameId == null) return;
+    const data = loadGame(selectedGameId);
+    const ms = data.matches ?? [];
+    const rec = gameHasRecordedScore(ms);
+    const out = rosterOutOfSyncWithDraw(data.members ?? [], ms);
+    if (ms.length === 0) setDetailStep("people");
+    else if (out) setDetailStep("draw");
+    else if (rec) setDetailStep("score");
+    else setDetailStep("draw");
+  }, [selectedGameId]);
+
   /** 경기 목록 상세·프로필 수정 열림 시 캐러셀 스와이프 무시용 ref 동기화 */
   useEffect(() => {
     overlayOpenRef.current = !!(selectedGameId || profileEditOpen || profileEditClosing || showWithdrawConfirm);
@@ -1082,6 +1113,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     );
     setRosterChangedSinceGenerate(false);
     matchGenerateDoneAtRef.current = Date.now();
+    setDetailStep("draw");
 
     const existing = loadGame(effectiveGameId);
     const payload = buildGameDataPayload(existing, {
@@ -1689,7 +1721,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           <h1 className="text-[1.25rem] font-semibold tracking-tight text-[#1d1d1f] flex items-center gap-1.5">
             {navView === "setting" && (
               <>
-                경기 방식
+                새 경기
                 <button
                   type="button"
                   onClick={() => setShowGameModeHelp(true)}
@@ -1702,7 +1734,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             )}
             {navView === "record" && (
               <>
-                경기 목록
+                오늘 경기
                 <button
                   type="button"
                   onClick={() => setShowRecordHelp(true)}
@@ -1713,7 +1745,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </button>
               </>
             )}
-            {navView === "myinfo" && "경기 이사"}
+            {navView === "myinfo" && "내 정보"}
           </h1>
         </div>
       </header>
@@ -1731,8 +1763,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
               if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowGameModeHelp(false);
             }}
           >
-            <p className="text-sm text-slate-700 leading-relaxed">
-              각 카테고리 내에 여러 개의 경기 방식을 업데이트 중에 있습니다. 설명을 읽고 원하는 경기 방식을 선택하여 경기 목록으로 이동시킬 수 있습니다.
+            <p className="text-base text-slate-700 leading-relaxed">
+              방식을 고른 뒤 「경기 만들기」를 누르면 오늘 경기에 생깁니다.
             </p>
             <button
               type="button"
@@ -1758,8 +1790,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
               if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowRecordHelp(false);
             }}
           >
-            <p className="text-sm text-slate-700 leading-relaxed">
-              경기를 만들면 내가 명단에 들어갑니다. 대진 전에 공유 링크를 열면 명단과 내 목록에 들어갑니다. 대진 후에 들어오면 만든이가 대진을 다시 만들어야 경기에 들어가고 점수를 기록할 수 있습니다. 점수가 있으면 명단과 대진을 바꾸지 않고, 링크는 보기만 됩니다.
+            <p className="text-base text-slate-700 leading-relaxed">
+              만든이는 「만들기 → 보내기 → 대진 → 점수」만 보면 됩니다. 링크를 받은 사람은 오늘 경기에 들어가서, 사람 모으는 중인지 점수 적는 중인지만 보면 됩니다.
             </p>
             <p className="mt-2 text-xs text-slate-500 leading-relaxed">
               만든이가 경기를 삭제하면 다른 사람 목록에서도 사라집니다. 참여자는 목록에서만 뺍니다.
@@ -1845,7 +1877,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         onTouchMove={handleMainTouchMove}
         onTouchEnd={handleMainTouchEnd}
       >
-        {navIndex === 0 && (
+        {navView === "setting" && (
         <div key={`setting-${settingRefreshKey}`} className="space-y-2 pt-4 animate-panel-enter">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
         <section id="section-info" className="scroll-mt-2">
@@ -1916,9 +1948,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       type="button"
                       onClick={addGameToRecord}
                       disabled={!isOnline}
-                      className="w-full py-1.5 rounded-xl font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3] btn-tap"
+                      className="w-full py-4 rounded-2xl text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3] btn-tap"
                     >
-                      아래 경기 방식으로 경기 목록에 추가
+                      경기 만들기
                     </button>
                     )}
                     {gameModeId === "individual_b" && (
@@ -2018,7 +2050,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </section>
         </div>
         )}
-        {navIndex === 1 && (
+        {navView === "record" && (
         <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh] w-full animate-panel-enter">
         {!selectedGameId && (
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
@@ -2031,8 +2063,53 @@ export function GameView({ gameId }: { gameId: string | null }) {
               return tB.localeCompare(tA);
             });
             return gameIds.length === 0 ? (
-              <p className="text-sm text-slate-500 py-8 text-center">아직 추가된 경기이 없습니다.<br />경기 세팅에서 경기 방식을 선택한 뒤 &#39;목록에 추가&#39;를 누르세요.</p>
+              <div className="px-2 py-8 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setNavView("setting")}
+                  className="w-full py-4 rounded-2xl text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+                >
+                  경기 만들기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setJoinLinkOpen((open) => !open)}
+                  className="w-full py-4 rounded-2xl text-lg font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 transition-colors btn-tap"
+                >
+                  링크로 들어가기
+                </button>
+                {joinLinkOpen && (
+                  <div className="space-y-2 pt-1">
+                    <input
+                      type="text"
+                      value={joinLinkInput}
+                      onChange={(e) => setJoinLinkInput(e.target.value)}
+                      placeholder="받은 링크를 붙여 넣으세요"
+                      className="w-full py-3 px-3 text-base rounded-xl border border-[#d2d2d7] bg-white"
+                      aria-label="받은 링크"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = parseShareParam(joinLinkInput);
+                        if (!id) {
+                          setShareToast("받은 링크를 붙여 넣어 주세요.");
+                          setTimeout(() => setShareToast(null), 3000);
+                          return;
+                        }
+                        setJoinLinkOpen(false);
+                        setJoinLinkInput("");
+                        processShareAndOpenDetail(id);
+                      }}
+                      className="w-full py-3 rounded-xl text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                    >
+                      들어가기
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
+            <>
             <ul className="space-y-0.5">
               {sortedIds.map((id, index) => {
                 const data = loadGame(id);
@@ -2056,31 +2133,31 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const matchIdSet = new Set(data.matches.map((m) => String(m.id)));
                 const ongoingCount = (data.playingMatchIds ?? []).filter((id) => matchIdSet.has(id)).length;
                 const allDone = hasMatches && completedCount === data.matches.length;
-                /** 신청: 경기 0개. 생성: 경기 있음 & 종료 0 & 진행 0. 진행: 종료 또는 진행 1개 이상(전부 종료 전). 종료: 전부 종료 */
+                const rosterOut = rosterOutOfSyncWithDraw(data.members ?? [], data.matches ?? []);
                 const currentStage =
                   !hasMatches
-                    ? "신청단계"
-                    : completedCount === 0 && ongoingCount === 0
-                      ? "생성단계"
-                      : allDone
-                        ? "종료단계"
-                        : "진행단계";
-                const stages = ["신청단계", "생성단계", "진행단계", "종료단계"] as const;
-                /** 단계별 뱃지 하이라이트 */
-                const stageHighlight: Record<(typeof stages)[number], string> = {
-                  신청단계: "bg-green-100 text-green-700 border border-green-200",
-                  생성단계: "bg-blue-100 text-blue-700 border border-blue-200",
-                  진행단계: "bg-amber-100 text-amber-700 border border-amber-200",
-                  종료단계: "bg-slate-800 text-white border border-slate-700",
+                    ? "사람 모으는 중"
+                    : rosterOut
+                      ? "대진 다시 필요"
+                      : completedCount === 0
+                        ? "대진 있음"
+                        : allDone
+                          ? "끝"
+                          : "점수 적는 중";
+                const stageHighlight: Record<string, string> = {
+                  "사람 모으는 중": "bg-green-100 text-green-700 border border-green-200",
+                  "대진 다시 필요": "bg-amber-100 text-amber-800 border border-amber-200",
+                  "대진 있음": "bg-blue-100 text-blue-700 border border-blue-200",
+                  "점수 적는 중": "bg-amber-100 text-amber-700 border border-amber-200",
+                  "끝": "bg-slate-800 text-white border border-slate-700",
                 };
-                /** 테이블 헤더도 현재 단계와 동일 색채로 매칭 */
-                const tableHeaderByStage: Record<(typeof stages)[number], string> = {
-                  신청단계: "bg-green-100 text-green-700",
-                  생성단계: "bg-blue-100 text-blue-700",
-                  진행단계: "bg-amber-100 text-amber-700",
-                  종료단계: "bg-slate-800 text-white",
+                const tableHeaderByStage: Record<string, string> = {
+                  "사람 모으는 중": "bg-green-100 text-green-700",
+                  "대진 다시 필요": "bg-amber-100 text-amber-800",
+                  "대진 있음": "bg-blue-100 text-blue-700",
+                  "점수 적는 중": "bg-amber-100 text-amber-700",
+                  "끝": "bg-slate-800 text-white",
                 };
-                const stageMuted = "bg-slate-50 text-slate-400";
                 const tableHeaderClass = tableHeaderByStage[currentStage];
                 const total = data.matches.length;
                 const waitingCount = total - completedCount - ongoingCount;
@@ -2152,7 +2229,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               const uid = myInfo.uid ?? getCurrentUserUid();
                               const madeByMe = Boolean(uid && data.createdByUid && uid === data.createdByUid);
                               const onRoster = Boolean(uid && data.members.some((m) => m.linkedUid === uid));
-                              const relation = madeByMe ? "내가 만든 경기" : onRoster ? "참여한 경기" : "보기만";
+                              const relation = madeByMe ? "내가 만든 경기" : onRoster ? "같이함" : "구경";
                               const relationClass = madeByMe
                                 ? "bg-blue-100 text-blue-700"
                                 : onRoster
@@ -2171,22 +2248,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         {/* 신청·생성·진행·종료 뱃지 + 총/종료/진행/대기 테이블 (경기 요약 하단, 전체 너비) */}
                         <div className="w-full flex flex-col gap-0.5 pt-1">
                           <div className="flex items-center gap-1 flex-wrap">
-                            {stages.map((s) => (
-                              <span
-                                key={s}
-                                className={`text-xs font-medium px-1.5 py-0 rounded-full shrink-0 leading-none ${s === currentStage ? stageHighlight[s] : stageMuted}`}
-                              >
-                                {s.replace("단계", "")}
-                              </span>
-                            ))}
+                            <span className={`text-sm font-semibold px-2 py-0.5 rounded-full shrink-0 leading-none ${stageHighlight[currentStage]}`}>
+                              {currentStage}
+                            </span>
                           </div>
                           {total > 0 && (
                             <table className="w-full max-w-[200px] text-xs border border-slate-200 rounded overflow-hidden font-numeric table-fixed border-collapse">
                               <tbody>
                                 <tr className={tableHeaderClass}>
-                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "종료단계" ? "border-slate-600" : "border-slate-200"}`}>총</th>
-                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "종료단계" ? "border-slate-600" : "border-slate-200"}`}>종료</th>
-                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "종료단계" ? "border-slate-600" : "border-slate-200"}`}>진행</th>
+                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "끝" ? "border-slate-600" : "border-slate-200"}`}>총</th>
+                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "끝" ? "border-slate-600" : "border-slate-200"}`}>종료</th>
+                                  <th className={`py-0 px-1 text-center font-medium leading-none w-1/4 border-r ${currentStage === "끝" ? "border-slate-600" : "border-slate-200"}`}>진행</th>
                                   <th className="py-0 px-1 text-center font-medium leading-none w-1/4">대기</th>
                                 </tr>
                                 <tr className="border-t border-[#e8e8ed] bg-white text-slate-700">
@@ -2236,7 +2308,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               onClick={(e) => { e.stopPropagation(); handleShareCard(id); }}
                               className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-b-lg btn-tap"
                             >
-                              공유
+                              카톡으로 보내기
                             </button>
                           </div>
                         </>
@@ -2246,6 +2318,45 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 );
               })}
             </ul>
+            <div className="px-2 pt-4 space-y-2">
+              <button
+                type="button"
+                onClick={() => setJoinLinkOpen((open) => !open)}
+                className="w-full py-3 rounded-xl text-base font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 btn-tap"
+              >
+                링크로 들어가기
+              </button>
+              {joinLinkOpen && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={joinLinkInput}
+                    onChange={(e) => setJoinLinkInput(e.target.value)}
+                    placeholder="받은 링크를 붙여 넣으세요"
+                    className="w-full py-3 px-3 text-base rounded-xl border border-[#d2d2d7] bg-white"
+                    aria-label="받은 링크"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const id = parseShareParam(joinLinkInput);
+                      if (!id) {
+                        setShareToast("받은 링크를 붙여 넣어 주세요.");
+                        setTimeout(() => setShareToast(null), 3000);
+                        return;
+                      }
+                      setJoinLinkOpen(false);
+                      setJoinLinkInput("");
+                      processShareAndOpenDetail(id);
+                    }}
+                    className="w-full py-3 rounded-xl text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                  >
+                    들어가기
+                  </button>
+                </div>
+              )}
+            </div>
+            </>
             );
           })()}
         </div>
@@ -2289,12 +2400,22 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 const gameTimeEl = document.getElementById("game-time") as HTMLSelectElement | null;
                 const gameLocationEl = document.getElementById("game-location") as HTMLInputElement | null;
                 const gameScoreLimitEl = document.getElementById("game-score-limit") as HTMLInputElement | null;
-                const gameNameToSave = isGameSummaryEditable ? (gameNameEl?.value?.trim() || undefined) : existing.gameName;
+                const gameNameToSave = isGameSummaryEditable
+                  ? (gameNameEl ? (gameNameEl.value.trim() || undefined) : (gameName.trim() || existing.gameName))
+                  : existing.gameName;
                 const baseSettings = existing.gameSettings ?? gameSettings;
-                const dateToSave = isGameSummaryEditable ? (gameDateEl?.value?.trim() || gameSettings.date) : baseSettings.date;
-                const timeToSave = isGameSummaryEditable && gameTimeEl?.value && TIME_OPTIONS_30MIN.includes(gameTimeEl.value) ? gameTimeEl.value : baseSettings.time;
-                const locationToSave = isGameSummaryEditable ? (gameLocationEl?.value?.trim() ?? gameSettings.location) : baseSettings.location;
-                const scoreRaw = isGameSummaryEditable && gameScoreLimitEl?.value != null ? parseInt(gameScoreLimitEl.value, 10) : baseSettings.scoreLimit;
+                const dateToSave = isGameSummaryEditable
+                  ? (gameDateEl ? (gameDateEl.value.trim() || gameSettings.date) : gameSettings.date)
+                  : baseSettings.date;
+                const timeToSave = isGameSummaryEditable
+                  ? (gameTimeEl && TIME_OPTIONS_30MIN.includes(gameTimeEl.value) ? gameTimeEl.value : gameSettings.time)
+                  : baseSettings.time;
+                const locationToSave = isGameSummaryEditable
+                  ? (gameLocationEl ? (gameLocationEl.value.trim() ?? gameSettings.location) : gameSettings.location)
+                  : baseSettings.location;
+                const scoreRaw = isGameSummaryEditable && gameScoreLimitEl?.value != null
+                  ? parseInt(gameScoreLimitEl.value, 10)
+                  : gameSettings.scoreLimit;
                 const scoreLimitToSave = Number.isNaN(scoreRaw) ? 21 : Math.max(1, Math.min(99, scoreRaw));
                 const membersToSave = hasSavedScore
                   ? (existing.members ?? [])
@@ -2329,12 +2450,33 @@ export function GameView({ gameId }: { gameId: string | null }) {
             >
               ← 목록으로
             </button>
-            {lastFirestoreUploadBytes != null && loadGame(effectiveGameId ?? null).shareId && (
-              <span className="text-xs text-slate-500 font-numeric" title="방금 Firestore에 업로드한 용량">
-                마지막 업로드: {lastFirestoreUploadBytes < 1024 ? `${lastFirestoreUploadBytes} B` : `${(lastFirestoreUploadBytes / 1024).toFixed(2)} KB`}
-              </span>
-            )}
           </div>
+          <div className="flex items-center justify-around rounded-2xl bg-white border border-[#e8e8ed] px-1 py-1 mb-1">
+            {([
+              { id: "people" as const, label: "사람" },
+              { id: "draw" as const, label: "대진" },
+              { id: "score" as const, label: "점수" },
+            ]).map((s) => {
+              const locked = s.id !== "people" && matches.length === 0;
+              const active = detailStep === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  disabled={locked}
+                  onClick={() => {
+                    if (!locked) setDetailStep(s.id);
+                  }}
+                  className={`flex-1 py-3 text-lg font-semibold rounded-xl btn-tap ${active ? "text-[#0071e3]" : locked ? "text-slate-300" : "text-slate-500"}`}
+                >
+                  {s.label}{active ? " ●" : ""}
+                </button>
+              );
+            })}
+          </div>
+
+          {detailStep === "people" && (
+          <>
           {/* 경기 요약 카드 */}
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 card-app card-app-interactive">
             <div className="px-4 py-0.5 border-b border-[#e8e8ed] flex items-center justify-between gap-2">
@@ -2451,14 +2593,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
           <div id="section-members" className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 scroll-mt-2 card-app card-app-interactive">
             <div className="px-2 py-1.5 border-b border-[#e8e8ed] flex items-center justify-between">
               <div>
-                <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <h3 className="text-lg font-semibold text-slate-800">경기 명단</h3>
+                <p className="text-base text-slate-600 mt-1">
                   {hasSavedScore
-                    ? "점수가 있으면 명단과 대진을 바꾸지 않습니다."
-                    : isGameOwner
-                    ? "이름 추가·삭제는 만든이만 합니다. 대진 전에 링크를 연 사람은 명단에 들어갑니다. 대진 후에 들어오면 대진을 다시 만들어야 합니다."
-                    : "링크를 열면 명단에 들어갑니다. 대진 후에는 만든이가 대진을 다시 만들어야 점수를 기록합니다. 점수가 있으면 보기만 됩니다."}{" "}
-                  <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>🔃</span>=연동(Firebase 계정) · <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>⏸️</span>=비연동
+                    ? "점수가 있으면 명단을 바꾸지 않습니다."
+                    : "이름을 넣고, 카톡으로 보내 사람을 모으세요."}
                 </p>
               </div>
               <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
@@ -2483,9 +2622,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       <td className="border-l border-slate-300 px-1 py-0 align-middle text-sm font-medium text-slate-800 whitespace-nowrap min-w-0 leading-tight">
                         <span className="tracking-tighter inline-flex items-center gap-0" style={{ letterSpacing: "-0.02em" }}>
                           {m.name}
-                          <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={m.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={m.linkedUid ? "연동" : "비연동"}>
-                            <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{m.linkedUid ? "🔃" : "⏸️"}</span>
-                          </span>
                           <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: m.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
                             <span className="inline-block">{m.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
                             <span className="inline-block leading-none align-middle text-black">{m.grade}</span>
@@ -2565,7 +2701,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
             </div>
             )}
-            <div className="border-t border-[#e8e8ed] px-2 py-2">
+            <div className="border-t border-[#e8e8ed] px-2 py-3 space-y-2">
               {!isOnRoster && !hasSavedScore && (
               <button
                 type="button"
@@ -2595,20 +2731,34 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     enrollGameInMyList(effectiveGameId);
                   }
                 }}
-                className="w-full py-2 rounded-xl text-sm font-medium text-[#0071e3] bg-[#0071e3]/10 hover:bg-[#0071e3]/20 transition-colors btn-tap mb-2"
+                className="w-full py-3 rounded-xl text-base font-semibold text-[#0071e3] bg-[#0071e3]/10 hover:bg-[#0071e3]/20 transition-colors btn-tap"
               >
-                프로필로 나 추가
+                나도 넣기
               </button>
               )}
-              {isGameOwner && (
+              {effectiveGameId != null && (
               <button
                 type="button"
-                disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers || hasSavedScore || (matches.length > 0 && !rosterChangedSinceGenerate && !rosterOutOfSync)}
+                onClick={() => handleShareCard(effectiveGameId)}
+                className={`w-full py-4 rounded-2xl text-lg font-semibold btn-tap ${
+                  isGameOwner && matches.length === 0 && members.length >= gameMode.minPlayers && members.length <= gameMode.maxPlayers && !hasSavedScore
+                    ? "text-[#0071e3] bg-white border-2 border-[#0071e3]"
+                    : "text-white bg-[#0071e3] hover:bg-[#0077ed]"
+                }`}
+              >
+                카톡으로 보내기
+              </button>
+              )}
+              {isGameOwner && matches.length === 0 && (
+              <button
+                type="button"
+                disabled={members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers || hasSavedScore}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   if (members.length < gameMode.minPlayers || members.length > gameMode.maxPlayers) {
-                    alert(`경기 인원은 ${gameMode.minPlayers}~${gameMode.maxPlayers}명이어야 합니다.`);
+                    setShareToast(`인원은 ${gameMode.minPlayers}~${gameMode.maxPlayers}명이어야 합니다.`);
+                    setTimeout(() => setShareToast(null), 3000);
                     return;
                   }
                   if (hasSavedScore) {
@@ -2616,42 +2766,68 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setTimeout(() => setShareToast(null), 3000);
                     return;
                   }
-                  if (matches.length > 0) {
-                    setShowRegenerateConfirm(true);
-                    return;
-                  }
                   doMatch();
                 }}
-                className="w-full py-3 rounded-xl font-semibold text-white transition-colors hover:opacity-95 bg-[#0071e3] hover:bg-[#0077ed] btn-tap disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
+                className="w-full py-4 rounded-2xl text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
               >
-                {matches.length > 0 ? "대진 다시 만들기" : "경기 생성"}
+                대진 만들기
               </button>
               )}
-              <p className="text-xs text-slate-500 mt-1.5">
-                <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
-              </p>
-              {hasSavedScore && (
-                <p className="text-xs text-slate-400 mt-1 text-center">점수가 있으면 명단과 대진을 바꾸지 않습니다.</p>
-              )}
-              {rosterOutOfSync && !hasSavedScore && (
-                <p className="text-xs text-slate-400 mt-1 text-center">명단에만 있는 사람이 있습니다. 대진을 다시 만들어야 경기에 들어가고 점수를 기록할 수 있습니다.</p>
+              {rosterOutOfSync && !hasSavedScore && matches.length > 0 && (
+                <p className="text-base text-amber-800 text-center">늦게 들어온 사람이 있습니다. 대진에서 다시 만드세요.</p>
               )}
               {members.length < gameMode.minPlayers && (
-                <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.minPlayers}</span>~<span className="font-numeric">{gameMode.maxPlayers}</span>명이어야 합니다.</p>
+                <p className="text-base text-slate-500 text-center">아직 {gameMode.minPlayers}명이 안 됐습니다.</p>
               )}
               {members.length > gameMode.maxPlayers && (
-                <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.maxPlayers}</span>명까지입니다.</p>
+                <p className="text-base text-slate-500 text-center">인원은 {gameMode.maxPlayers}명까지입니다.</p>
               )}
             </div>
           </div>
+          </>
+          )}
 
+          {detailStep === "draw" && (
+          <>
+          {isGameOwner && rosterOutOfSync && !hasSavedScore && matches.length > 0 && (
+            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-3 py-3 space-y-2">
+              <p className="text-base text-amber-900 text-center">늦게 들어온 사람이 있습니다.</p>
+              <button
+                type="button"
+                onClick={() => setShowRegenerateConfirm(true)}
+                className="w-full py-4 rounded-2xl text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+              >
+                대진 다시 만들기
+              </button>
+            </div>
+          )}
+          {isGameOwner && matches.length > 0 && !rosterOutOfSync && !hasSavedScore && rosterChangedSinceGenerate && (
+            <button
+              type="button"
+              onClick={() => setShowRegenerateConfirm(true)}
+              className="w-full py-4 rounded-2xl text-lg font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] btn-tap"
+            >
+              대진 다시 만들기
+            </button>
+          )}
+          </>
+          )}
+
+          {(detailStep === "draw" || detailStep === "score") && (
+          <>
+          {detailStep === "score" && rosterOutOfSync && (
+            <p className="text-base text-amber-800 text-center px-2 py-2">대진을 다시 만든 뒤에 점수를 적을 수 있습니다.</p>
+          )}
+          {detailStep === "score" && !isOnRoster && !rosterOutOfSync && (
+            <p className="text-base text-slate-600 text-center px-2 py-2">명단에 있어야 점수를 적을 수 있습니다.</p>
+          )}
           {/* 매치 목록 - 1줄씩 */}
           <section id="section-matches" className="scroll-mt-2">
           {matches.length > 0 && (
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden mt-2 card-app card-app-interactive">
               <div className="px-2 py-1.5 border-b border-[#e8e8ed]">
-                <h3 className="text-base font-semibold text-slate-800">경기 현황</h3>
-                {(() => {
+                <h3 className="text-lg font-semibold text-slate-800">{detailStep === "score" ? "점수" : "대진표"}</h3>
+                {detailStep === "score" && (() => {
                   const ids = new Set<string>();
                   matches.forEach((m) => {
                     ids.add(m.team1.players[0].id);
@@ -2669,6 +2845,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   );
                 })()}
               </div>
+              {detailStep === "score" && (
               <div className="px-2 py-1 border-b border-[#e8e8ed]">
                 {/* 총 / 종료 / 진행 / 대기 테이블 */}
                 {(() => {
@@ -2703,11 +2880,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   );
                 })()}
                 {playingMatches.length > 0 && (
-                  <p className="text-fluid-xs text-slate-400 mt-1">
-                    진행 뱃지 다시 눌러 해제 · 가능 <span className="font-numeric">{playableMatches.length}</span>경기
+                  <p className="text-base text-slate-500 mt-1">
+                    진행을 다시 누르면 해제됩니다. 가능 {playableMatches.length}경기
                   </p>
                 )}
               </div>
+              )}
               <div className="divide-y divide-slate-100">
                 {matches.map((m, index) => {
                   const isDone = isRecordedScore(m);
@@ -2727,7 +2905,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       : isPlayable
                         ? "bg-green-500 text-white border border-green-600 font-semibold"
                         : "bg-slate-100 text-slate-600";
-                  const canSelect = !isDone && canRecordScores;
+                  const canSelect = detailStep === "score" && !isDone && canRecordScores;
                   const history = m.savedHistory && m.savedHistory.length > 0 ? m.savedHistory : (m.savedAt ? [{ at: m.savedAt, by: m.savedBy ?? "", savedByName: null }] : []);
                   const lastSaved = history.length > 0 ? history[history.length - 1] : null;
                   const savedByName = lastSaved?.savedByName ?? (lastSaved?.by ? members.find((p) => p.id === lastSaved.by)?.name : null);
@@ -2770,9 +2948,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                           >
                             <span className={`tracking-tighter inline-flex items-center gap-0 truncate text-sm ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500 rounded px-0.5" : ""}`} style={{ letterSpacing: "-0.02em" }}>
                               {p.name}
-                              <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={p.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={p.linkedUid ? "연동" : "비연동"}>
-                                <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{p.linkedUid ? "🔃" : "⏸️"}</span>
-                              </span>
                               <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: p.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
                                 <span className="inline-block">{p.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
                                 <span className="inline-block leading-none align-middle text-black">{p.grade}</span>
@@ -2782,7 +2957,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         );
                       })}
                     </div>
-                    <div className="shrink-0 w-12 flex items-center justify-center">
+                    <div className="shrink-0 min-w-[3.5rem] flex items-center justify-center">
+                      {detailStep === "score" ? (
                       <div className="flex items-center gap-0">
                         <input
                           type="number"
@@ -2797,11 +2973,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             updateScoreInput(m.id, "s1", v);
                           }}
                           disabled={!canRecordScores}
-                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
+                          className="w-11 h-10 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-center text-lg font-semibold font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
                           aria-label="팀1 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
-                        <span className="text-slate-400 text-sm font-medium">:</span>
+                        <span className="text-slate-400 text-lg font-medium px-0.5">:</span>
                         <input
                           type="number"
                           min={0}
@@ -2815,11 +2991,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             updateScoreInput(m.id, "s2", v);
                           }}
                           disabled={!canRecordScores}
-                          className="w-9 h-7 rounded border border-slate-200 bg-slate-50 text-slate-800 text-center text-sm font-medium font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
+                          className="w-11 h-10 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-center text-lg font-semibold font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
                           aria-label="팀2 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
                       </div>
+                      ) : (
+                        <span className="text-base font-numeric text-slate-500">
+                          {isDone ? `${m.score1 ?? 0}:${m.score2 ?? 0}` : "vs"}
+                        </span>
+                      )}
                     </div>
                     <div className="min-w-0 flex-1 flex flex-col justify-center text-right max-w-[5.5rem] gap-0 overflow-hidden">
                       {m.team2.players.map((p) => {
@@ -2834,9 +3015,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                           >
                             <span className={`tracking-tighter inline-flex items-center gap-0 truncate text-sm justify-end ${isHighlight ? "bg-amber-400 text-amber-900 font-bold ring-1 ring-amber-500 rounded px-0.5" : ""}`} style={{ letterSpacing: "-0.02em" }}>
                               {p.name}
-                              <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={p.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={p.linkedUid ? "연동" : "비연동"}>
-                                <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{p.linkedUid ? "🔃" : "⏸️"}</span>
-                              </span>
                               <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: p.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
                                 <span className="inline-block">{p.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
                                 <span className="inline-block leading-none align-middle text-black">{p.grade}</span>
@@ -2846,16 +3024,18 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         );
                       })}
                     </div>
+                    {detailStep === "score" && (
                     <button
                       type="button"
                       onClick={() => saveResult(m.id)}
                       disabled={!canRecordScores}
-                      className="shrink-0 min-w-[2rem] px-1 py-1 rounded text-xs font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="shrink-0 min-w-[3rem] px-2 py-2 rounded-lg text-base font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       저장
                     </button>
+                    )}
                     </div>
-                    {hasInfoLine && (
+                    {detailStep === "score" && hasInfoLine && (
                       <p className="text-fluid-xs text-slate-500 pl-10 leading-tight flex items-center gap-1.5 flex-wrap" title={lastSaved ? new Date(lastSaved.at).toLocaleString("ko-KR") : ""}>
                         {(savedByName != null || savedAtStr) && (
                           <span className="font-medium text-slate-600">{savedByName ?? "—"} {savedAtStr}</span>
@@ -2873,6 +3053,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
           )}
         </section>
 
+        {detailStep === "score" && (
+        <>
         {/* 경기 결과(랭킹) 카드 */}
         <section id="section-ranking" className="scroll-mt-2">
           <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
@@ -2881,7 +3063,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <p className="text-xs text-slate-500 mt-0.5">경기 현황에서 진행한 경기 점수로 산출됩니다. 승수·득실차·급수 순으로 정렬됩니다.</p>
             </div>
             {matches.length === 0 ? (
-              <p className="px-2 py-4 text-sm text-slate-500 text-center">경기 명단으로 경기 생성 후, 경기 현황에서 점수를 입력하면 여기에 결과가 표시됩니다.</p>
+              <p className="px-2 py-4 text-base text-slate-500 text-center">점수를 적으면 여기에 순위가 나옵니다.</p>
             ) : (
             <ul className="divide-y divide-slate-100">
               {ranking.map((m, i) => {
@@ -2940,9 +3122,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <div className="flex-1 min-w-0 flex items-center gap-0 leading-tight">
                       <span className="tracking-tighter inline-flex items-center gap-0 font-medium text-slate-800 text-sm" style={{ letterSpacing: "-0.02em" }}>
                         {m.name}
-                        <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={m.linkedUid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={m.linkedUid ? "연동" : "비연동"}>
-                          <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{m.linkedUid ? "🔃" : "⏸️"}</span>
-                        </span>
                         <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: m.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
                           <span className="inline-block">{m.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
                           <span className="inline-block leading-none align-middle text-black">{m.grade}</span>
@@ -2964,13 +3143,17 @@ export function GameView({ gameId }: { gameId: string | null }) {
             )}
           </div>
         </section>
+        </>
+        )}
+          </>
+          )}
 
         </div>
         </div>
         )}
         </div>
         )}
-        {navIndex === 2 && (
+        {navView === "myinfo" && (
           <div key="myinfo" className="pt-4 space-y-2 animate-panel-enter">
             {!isProfileComplete && (
               <p className="text-sm text-slate-600 px-1">이름과 생년월일을 저장하면 경기를 이용할 수 있습니다.</p>
@@ -3004,9 +3187,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <p className="min-w-0 flex-1 text-sm font-medium text-slate-800 truncate">
                       <span className="tracking-tighter inline-flex items-center gap-0" style={{ letterSpacing: "-0.02em" }}>
                         {myInfo.name || "이름 없음"}
-                        <span className="shrink-0 inline-block w-[0.65em] overflow-visible align-middle" style={{ lineHeight: 0 }} title={myInfo.uid ? "Firebase 계정 연동 · 공동편집·통계 연동 가능" : "비연동"} aria-label={myInfo.uid ? "연동" : "비연동"}>
-                          <span className="inline-block origin-left" style={{ transform: "scale(0.65)", transformOrigin: "left center", filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>{myInfo.uid ? "🔃" : "⏸️"}</span>
-                        </span>
                         <span className="inline-flex items-center gap-0 text-base leading-none origin-left" style={{ letterSpacing: "-0.08em", color: myInfo.gender === "F" ? "#e8a4bc" : "#7c9fd8", transform: "scale(0.5)", transformOrigin: "left center" }}>
                           <span className="inline-block">{myInfo.gender === "F" ? "\u2640\uFE0F" : "\u2642\uFE0F"}</span>
                           <span className="inline-block leading-none align-middle text-black">{myInfo.grade ?? "D"}</span>
@@ -3038,11 +3218,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
               <div className="px-3 py-3 space-y-2">
                 <h3 className="text-sm font-semibold text-slate-800">사용법</h3>
-                <ul className="text-xs text-slate-600 leading-relaxed list-disc pl-4 space-y-1">
-                  <li>전화번호로 본인 확인합니다. 처음이면 이름과 생년월일을 넣습니다.</li>
-                  <li>경기를 만들면 내가 명단에 들어갑니다. 대진 전에 링크를 열면 명단과 목록에 들어갑니다.</li>
-                  <li>대진 후에 링크를 열면 명단에만 들어갑니다. 만든이가 대진을 다시 만들어야 경기에 들어가고 점수를 기록할 수 있습니다.</li>
-                  <li>점수가 있으면 명단과 대진을 바꾸지 않습니다. 그때 연 링크는 목록에만 남고 보기만 됩니다.</li>
+                <ul className="text-base text-slate-600 leading-relaxed list-disc pl-5 space-y-2">
+                  <li>오늘 경기에서 「경기 만들기」를 누르거나, 받은 링크로 들어갑니다.</li>
+                  <li>사람 화면에서 「카톡으로 보내기」로 모으고, 인원이 되면 「대진 만들기」를 누릅니다.</li>
+                  <li>대진이 생기면 점수를 적습니다. 막히면 짧은 안내만 나옵니다.</li>
                 </ul>
               </div>
             </div>
@@ -3214,12 +3393,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
               setTimeout(() => setShareToast(null), 3000);
               return;
             }
-            setNavView("setting");
+            setNavView("record");
+            setSelectedGameId(null);
           }}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
+          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          <NavIconGameMode className="w-10 h-10 shrink-0" />
-          <span className="text-sm font-medium leading-tight">경기 방식</span>
+          <NavIconGameList className="w-10 h-10 shrink-0" />
+          <span className="text-sm font-medium leading-tight">오늘</span>
         </button>
         <button
           type="button"
@@ -3230,13 +3410,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
               setTimeout(() => setShareToast(null), 3000);
               return;
             }
-            setNavView("record");
-            setSelectedGameId(null);
+            setNavView("setting");
           }}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "record" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
+          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "setting" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
-          <NavIconGameList className="w-10 h-10 shrink-0" />
-          <span className="text-sm font-medium leading-tight">경기 목록</span>
+          <NavIconGameMode className="w-10 h-10 shrink-0" />
+          <span className="text-sm font-medium leading-tight">새 경기</span>
         </button>
         <button
           type="button"
@@ -3244,13 +3423,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
           className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 rounded-xl nav-tab btn-tap ${navView === "myinfo" ? "bg-[#0071e3]/10 text-[#0071e3] font-semibold" : "text-[#6e6e73] hover:text-[#1d1d1f] hover:bg-black/5"}`}
         >
           <NavIconMyInfo className="w-10 h-10 shrink-0" filled={isProfileComplete} />
-          <span className="text-sm font-medium leading-tight">경기 이사</span>
+          <span className="text-sm font-medium leading-tight">내 정보</span>
         </button>
       </nav>
 
       {/* 경기 생성 전 확인 모달 */}
       {shareToast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm shadow-lg animate-scale-in" role="status">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-3 rounded-lg bg-slate-800 text-white text-base shadow-lg animate-scale-in" role="status">
           {shareToast}
         </div>
       )}
@@ -3265,14 +3444,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
               if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowRegenerateConfirm(false);
             }}
           >
-            <p id="regenerate-confirm-title" className="text-sm text-slate-700 leading-relaxed">
+            <p id="regenerate-confirm-title" className="text-base text-slate-700 leading-relaxed">
               대진을 다시 만들면 지금 대진이 바뀝니다. 계속할까요?
             </p>
             <div className="flex gap-2 justify-end">
               <button
                 type="button"
                 onClick={() => setShowRegenerateConfirm(false)}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200"
+                className="px-4 py-3 rounded-xl text-base font-medium text-slate-700 bg-slate-100 hover:bg-slate-200"
               >
                 취소
               </button>
@@ -3282,7 +3461,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   doMatch();
                   setShowRegenerateConfirm(false);
                 }}
-                className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed]"
+                className="px-4 py-3 rounded-xl text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed]"
               >
                 계속
               </button>
