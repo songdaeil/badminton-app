@@ -1446,14 +1446,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   if (!loginGatePassed) {
     return (
-      <div className="min-h-screen min-h-[100dvh] bg-[#f3f6fb] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
-        <div className="w-full max-w-sm flex flex-col items-center gap-8">
-          <div className="text-center space-y-2">
+      <div className="min-h-screen min-h-[100dvh] bg-[#f3f6fb] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-2">
+        <div className="w-full max-w-sm flex flex-col items-center gap-3">
+          <div className="text-center space-y-1">
             <h1 className="text-2xl font-bold text-[#1d1d1f] tracking-tight">경기 이사</h1>
             <p className="text-base text-slate-500">전화번호로 본인 확인합니다. 처음이면 이어서 이름을 넣고, 이미 쓰면 바로 들어갑니다.</p>
           </div>
-          <div className="w-full space-y-3">
-            <div className="space-y-2">
+          <div className="w-full space-y-1">
+            <div className="space-y-1">
                   <p className="text-base text-slate-600 font-medium">전화번호</p>
                   {phoneStep === "idle" && (
                     <>
@@ -1465,7 +1465,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                           setPhoneError("");
                         }}
                         placeholder="010-1234-5678"
-                        className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        className="w-full px-3 py-1 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                         aria-label="전화번호"
                       />
                       <button
@@ -1498,7 +1498,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             setPhoneStep("idle");
                           }
                         }}
-                        className="w-full py-3 min-h-11 rounded-full text-base font-medium bg-slate-800 text-white hover:bg-slate-700 transition-colors btn-tap"
+                        className="w-full py-1 rounded-full text-base font-medium bg-slate-800 text-white hover:bg-slate-700 transition-colors btn-tap"
                       >
                         인증문자 보내기
                       </button>
@@ -1519,7 +1519,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                           setPhoneError("");
                         }}
                         placeholder="인증번호 6자리"
-                        className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-white text-base font-numeric focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                        className="w-full px-3 py-1 rounded-xl border border-slate-200 bg-white text-base font-numeric focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                         aria-label="인증번호"
                       />
                       <div className="flex gap-2">
@@ -1531,7 +1531,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             setPhoneCodeInput("");
                             setPhoneError("");
                           }}
-                          className="flex-1 py-3 min-h-11 rounded-full text-base font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
+                          className="flex-1 py-1 rounded-full text-base font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
                         >
                           취소
                         </button>
@@ -1563,7 +1563,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                               setPhoneStep("code");
                             }
                           }}
-                          className="flex-1 py-3 min-h-11 rounded-full text-base font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+                          className="flex-1 py-1 rounded-full text-base font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
                         >
                           인증 완료
                         </button>
@@ -1577,7 +1577,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   )}
                 </div>
 
-            <p className="text-center pt-4">
+            <p className="text-center pt-1">
               <a
                 href="/privacy.html"
                 target="_blank"
@@ -1603,13 +1603,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   if (!isProfileComplete) {
     return (
-      <div className="min-h-screen min-h-[100dvh] bg-[#f3f6fb] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
-        <div className="w-full max-w-sm flex flex-col items-center gap-6">
-          <div className="text-center space-y-2">
+      <div className="min-h-screen min-h-[100dvh] bg-[#f3f6fb] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-2">
+        <div className="w-full max-w-sm flex flex-col items-center gap-3">
+          <div className="text-center space-y-1">
             <h1 className="text-2xl font-bold text-[#1d1d1f] tracking-tight">경기 이사</h1>
             <p className="text-base text-slate-500">경기를 쓰려면 이름과 생년월일이 필요합니다.</p>
           </div>
-          <div className="w-full space-y-3">
+          <div className="w-full space-y-1">
             <div className="space-y-1.5">
               <label className="text-base text-slate-600 font-medium">이름</label>
               <input
@@ -1621,7 +1621,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   saveMyInfo(next);
                 }}
                 placeholder="이름"
-                className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                className="w-full px-3 py-1 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                 aria-label="이름"
               />
             </div>
@@ -1635,7 +1635,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   setMyInfo(next);
                   saveMyInfo(next);
                 }}
-                className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                className="w-full px-3 py-1 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                 aria-label="생년월일"
               />
             </div>
@@ -1649,7 +1649,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setMyInfo(next);
                     saveMyInfo(next);
                   }}
-                  className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  className="w-full px-3 py-1 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                   aria-label="성별"
                 >
                   <option value="M">남</option>
@@ -1665,7 +1665,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setMyInfo(next);
                     saveMyInfo(next);
                   }}
-                  className="w-full px-3 py-3 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  className="w-full px-3 py-1 rounded-xl border border-slate-200 bg-white text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                   aria-label="급수"
                 >
                   <option value="A">A</option>
@@ -1678,7 +1678,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <button
               type="button"
               onClick={uploadProfileToFirestore}
-              className="w-full py-3 min-h-11 rounded-full text-base font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+              className="w-full py-1 rounded-full text-base font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
             >
               시작하기
             </button>
@@ -1688,7 +1688,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <button
               type="button"
               onClick={handleSignOut}
-              className="w-full py-3 min-h-11 rounded-full text-base font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
+              className="w-full py-1 rounded-full text-base font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
             >
               다른 번호로
             </button>
@@ -1711,13 +1711,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
   return (
     <div className="min-h-screen bg-[#f3f6fb] text-[#1d1d1f] max-w-md mx-auto flex flex-col">
       {!isOnline && (
-        <div className="bg-amber-500 text-white text-center text-base py-2 px-3" role="alert">
+        <div className="bg-amber-500 text-white text-center text-base py-0.5 px-3" role="alert">
           오프라인입니다. 네트워크가 필요합니다.
         </div>
       )}
       {/* 헤더 - 흰 카드 + 아주 연한 파란 톤 */}
       <header className="sticky top-0 z-20 bg-[#f7faff] border-b border-[#e8eef6] safe-area-pb">
-        <div className="flex items-center gap-3 px-3 py-4">
+        <div className="flex items-center gap-3 px-3 py-1">
           <h1 className="text-[1.25rem] font-semibold tracking-tight text-[#1d1d1f] flex items-center gap-1.5">
             {navView === "setting" && (
               <>
@@ -1725,7 +1725,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <button
                   type="button"
                   onClick={() => setShowGameModeHelp(true)}
-                  className="w-10 h-10 flex items-center justify-center rounded-full bg-[#e8eef6] text-slate-600 hover:bg-[#dce6f2] text-base font-medium transition-colors"
+                  className="w-7 h-7 flex items-center justify-center rounded-full bg-[#e8eef6] text-slate-600 hover:bg-[#dce6f2] text-base font-medium transition-colors"
                   aria-label="도움말"
                 >
                   ?
@@ -1738,7 +1738,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <button
                   type="button"
                   onClick={() => setShowRecordHelp(true)}
-                  className="w-10 h-10 flex items-center justify-center rounded-full bg-[#e8eef6] text-slate-600 hover:bg-[#dce6f2] text-base font-medium transition-colors"
+                  className="w-7 h-7 flex items-center justify-center rounded-full bg-[#e8eef6] text-slate-600 hover:bg-[#dce6f2] text-base font-medium transition-colors"
                   aria-label="도움말"
                 >
                   ?
@@ -1755,7 +1755,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <>
           <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowGameModeHelp(false)} />
           <div
-            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-4 shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6]"
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-2 shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6]"
             onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
             onTouchEnd={(e) => {
               const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
@@ -1763,13 +1763,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
               if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowGameModeHelp(false);
             }}
           >
-            <p className="text-base text-slate-700 leading-relaxed">
+            <p className="text-base text-slate-700 leading-tight">
               방식을 고른 뒤 「경기 만들기」를 누르면 오늘 경기에 생깁니다.
             </p>
             <button
               type="button"
               onClick={() => setShowGameModeHelp(false)}
-              className="mt-3 w-full py-3 min-h-11 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+              className="mt-1 w-full py-1 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
             >
               닫기
             </button>
@@ -1782,7 +1782,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <>
           <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowRecordHelp(false)} />
           <div
-            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-4 shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6]"
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-2 shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6]"
             onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
             onTouchEnd={(e) => {
               const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
@@ -1790,16 +1790,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
               if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowRecordHelp(false);
             }}
           >
-            <p className="text-base text-slate-700 leading-relaxed">
+            <p className="text-base text-slate-700 leading-tight">
               만든이는 「만들기 → 보내기 → 대진 → 점수」만 보면 됩니다. 링크를 받은 사람은 오늘 경기에 들어가서, 사람 모으는 중인지 점수 적는 중인지만 보면 됩니다.
             </p>
-            <p className="mt-2 text-base text-slate-500 leading-relaxed">
+            <p className="mt-0.5 text-base text-slate-500 leading-tight">
               만든이가 경기를 삭제하면 다른 사람 목록에서도 사라집니다. 참여자는 목록에서만 뺍니다.
             </p>
             <button
               type="button"
               onClick={() => setShowRecordHelp(false)}
-              className="mt-3 w-full py-3 min-h-11 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+              className="mt-1 w-full py-1 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
             >
               닫기
             </button>
@@ -1811,7 +1811,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         <>
           <div className="fixed inset-0 z-30 bg-black/20" aria-hidden onClick={() => setShowWithdrawConfirm(false)} />
           <div
-            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-4 shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6]"
+            className="fixed left-1/2 top-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-2 shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6]"
             onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
             onTouchEnd={(e) => {
               const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
@@ -1820,14 +1820,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }}
           >
             <p className="text-base text-slate-800 font-medium">계정을 탈퇴할까요?</p>
-            <p className="mt-2 text-base text-slate-500 leading-relaxed">
+            <p className="mt-0.5 text-base text-slate-500 leading-tight">
               프로필, 경기 목록, 내가 만든 공유 경기가 삭제됩니다. 참여만 한 경기의 원본은 남습니다.
             </p>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-1 flex gap-2">
               <button
                 type="button"
                 onClick={() => setShowWithdrawConfirm(false)}
-                className="flex-1 py-3 min-h-11 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                className="flex-1 py-1 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
               >
                 취소
               </button>
@@ -1861,7 +1861,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   setShareToast("계정을 탈퇴했습니다.");
                   setTimeout(() => setShareToast(null), 3000);
                 }}
-                className="flex-1 py-3 min-h-11 rounded-full text-base font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+                className="flex-1 py-1 rounded-full text-base font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
               >
                 탈퇴
               </button>
@@ -1872,15 +1872,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
       <main
         ref={mainRef}
-        className="flex-1 px-2 pb-24 overflow-auto scroll-smooth"
+        className="flex-1 px-2 pb-16 overflow-auto scroll-smooth"
         onTouchStart={handleMainTouchStart}
         onTouchMove={handleMainTouchMove}
         onTouchEnd={handleMainTouchEnd}
       >
         {navView === "setting" && (
-        <div key={`setting-${settingRefreshKey}`} className="space-y-2 pt-4 animate-panel-enter">
+        <div key={`setting-${settingRefreshKey}`} className="space-y-1 pt-1 animate-panel-enter">
         {/* 경기 방식: 카테고리 탭 + 좌측 목록 + 우측 상세 (참고 이미지 구조) */}
-        <section id="section-info" className="scroll-mt-2">
+        <section id="section-info" className="scroll-mt-1">
           <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden min-w-0 card-app card-app-interactive">
             {/* 상단 카테고리 탭 - 좁은 폭에서 크기 자동 보정, 균등 분배 */}
             <div className="flex border-b border-[#e8eef6] flex-nowrap min-w-0">
@@ -1900,7 +1900,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         setGameSettings((prev) => ({ ...prev, scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore }));
                       }
                     }}
-                    className={`flex-1 min-w-0 px-1.5 py-3 sm:px-2.5 text-base font-medium border-b-2 transition-colors flex items-center justify-center gap-1 sm:gap-2 ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
+                    className={`flex-1 min-w-0 px-1.5 py-1 sm:px-2.5 text-base font-medium border-b-2 transition-colors flex items-center justify-center gap-1 sm:gap-2 ${isActive ? "border-[#0071e3] text-[#0071e3]" : "border-transparent text-slate-600 hover:text-slate-800"}`}
                   >
                     {cat.Icon && (
                       <span className="shrink-0 w-[clamp(1.25rem,6vw,2rem)] h-[clamp(1.25rem,6vw,2rem)] flex items-center justify-center">
@@ -1927,7 +1927,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             const defaultScore = mode.defaultScoreLimit ?? 21;
                             setGameSettings((prev) => ({ ...prev, scoreLimit: prev.scoreLimit >= 1 && prev.scoreLimit <= 99 ? prev.scoreLimit : defaultScore }));
                           }}
-                          className={`w-full text-left px-1 py-3 min-h-11 text-base rounded-r border-l-2 transition-colors whitespace-nowrap ${isSelected ? "border-[#0071e3] bg-[#0071e3]/10 text-[#0071e3] font-medium" : "border-transparent text-slate-700 hover:bg-slate-100/80"}`}
+                          className={`w-full text-left px-1 py-1 text-base rounded-r border-l-2 transition-colors whitespace-nowrap ${isSelected ? "border-[#0071e3] bg-[#0071e3]/10 text-[#0071e3] font-medium" : "border-transparent text-slate-700 hover:bg-slate-100/80"}`}
                         >
                           {mode.label}
                         </button>
@@ -1940,7 +1940,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 )}
               </nav>
               {/* 우측: 해당 카테고리에서 선택한 경기 방식일 때만 상세 표시 */}
-              <div className="flex-1 min-w-0 px-1 py-1 text-base text-[#6e6e73] space-y-1 leading-relaxed">
+              <div className="flex-1 min-w-0 px-1 py-1 text-base text-[#6e6e73] space-y-1 leading-tight">
                 {(gameMode.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId ? (
                   <>
                     {gameModeId !== "individual_b" && (
@@ -1948,7 +1948,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       type="button"
                       onClick={addGameToRecord}
                       disabled={!isOnline}
-                      className="w-full py-4 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3] btn-tap"
+                      className="w-full py-2 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors mb-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#0071e3] btn-tap"
                     >
                       경기 만들기
                     </button>
@@ -1957,7 +1957,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       <p className="text-base text-slate-500 mb-2">개인전b는 준비 중입니다. 지금은 개인전a로 경기를 만들 수 있습니다.</p>
                     )}
                     {gameModeId === "individual" ? (
-                      <div className="space-y-3">
+                      <div className="space-y-1">
                         <div>
                           <p className="text-base font-semibold text-[#0071e3] mb-0.5 leading-tight">특징</p>
                           <div className="space-y-0.5 text-slate-600 text-base leading-tight">
@@ -2014,7 +2014,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         </div>
                       </div>
                     ) : gameModeId === "individual_b" ? (
-                      <div className="space-y-3">
+                      <div className="space-y-1">
                         <div>
                           <p className="text-base font-semibold text-[#0071e3] mb-0.5 leading-tight">특징</p>
                           <p className="text-slate-600 text-base leading-tight">개인전b 전용 규칙입니다. (내용 추후 입력)</p>
@@ -2029,7 +2029,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-1">
                         <div>
                           <p className="text-base font-semibold text-[#0071e3] mb-0.5 leading-tight">인원</p>
                           <p className="text-slate-600 text-base leading-tight">{gameMode.minPlayers}~{gameMode.maxPlayers}명</p>
@@ -2038,7 +2038,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     )}
                   </>
                 ) : (
-                  <p className="text-base text-slate-500 py-8 text-center">
+                  <p className="text-base text-slate-500 py-2 text-center">
                     {GAME_MODES.filter((m) => (m.categoryId ?? GAME_CATEGORIES[0].id) === gameModeCategoryId).length === 0
                       ? "이 경기 방식은 준비 중입니다. 지금은 복식에서 경기를 만들 수 있습니다."
                       : "왼쪽 목록에서 경기 방식을 선택하면 상세 내용이 표시됩니다."}
@@ -2051,7 +2051,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
         {navView === "record" && (
-        <div key="record-wrap" className="relative pt-4 pb-28 min-h-[70vh] w-full animate-panel-enter">
+        <div key="record-wrap" className="relative pt-1 pb-16 min-h-[70vh] w-full animate-panel-enter">
         {!selectedGameId && (
         <div key="record-list" className="space-y-0.5 animate-fade-in-up">
           {(() => {
@@ -2063,29 +2063,29 @@ export function GameView({ gameId }: { gameId: string | null }) {
               return tB.localeCompare(tA);
             });
             return gameIds.length === 0 ? (
-              <div className="px-2 py-8 space-y-3">
+              <div className="px-2 py-1 space-y-1">
                 <button
                   type="button"
                   onClick={() => setNavView("setting")}
-                  className="w-full py-4 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
+                  className="w-full py-2 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap"
                 >
                   경기 만들기
                 </button>
                 <button
                   type="button"
                   onClick={() => setJoinLinkOpen((open) => !open)}
-                  className="w-full py-4 rounded-full text-lg font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 transition-colors btn-tap"
+                  className="w-full py-2 rounded-full text-lg font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 transition-colors btn-tap"
                 >
                   링크로 들어가기
                 </button>
                 {joinLinkOpen && (
-                  <div className="space-y-2 pt-1">
+                  <div className="space-y-1 pt-1">
                     <input
                       type="text"
                       value={joinLinkInput}
                       onChange={(e) => setJoinLinkInput(e.target.value)}
                       placeholder="받은 링크를 붙여 넣으세요"
-                      className="w-full py-3 px-3 text-base rounded-xl border border-[#d2d2d7] bg-white"
+                      className="w-full py-1 px-3 text-base rounded-xl border border-[#d2d2d7] bg-white"
                       aria-label="받은 링크"
                     />
                     <button
@@ -2101,7 +2101,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         setJoinLinkInput("");
                         processShareAndOpenDetail(id);
                       }}
-                      className="w-full py-3 rounded-full text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                      className="w-full py-1 rounded-full text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
                     >
                       들어가기
                     </button>
@@ -2110,7 +2110,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </div>
             ) : (
             <>
-            <ul className="space-y-2">
+            <ul className="space-y-1">
               {sortedIds.map((id, index) => {
                 const data = loadGame(id);
                 const isNewest = index === 0;
@@ -2180,7 +2180,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       onClick={() => { setListMenuOpenId(null); setSelectedGameId(id); }}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setListMenuOpenId(null); setSelectedGameId(id); } }}
                       style={{ touchAction: "pan-y" }}
-                      className="w-full text-left px-3 py-3 pr-10 rounded-3xl bg-white border border-[#e8eef6] hover:bg-[#f7faff] transition-all duration-200 btn-tap cursor-pointer card-app card-app-interactive"
+                      className="w-full text-left px-3 py-1 pr-10 rounded-3xl bg-white border border-[#e8eef6] hover:bg-[#f7faff] transition-all duration-200 btn-tap cursor-pointer card-app card-app-interactive"
                     >
                       {/* 1행: 경기 이름 (공간 확보, 비어 있으면 빈 줄 유지) */}
                       <p className="font-semibold text-slate-800 truncate text-base leading-tight font-numeric min-h-[1.25rem]" title={titleLabel}>{titleLabel || "\u00A0"}</p>
@@ -2284,7 +2284,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setListMenuOpenId((prev) => (prev === id ? null : id)); }}
-                        className="w-11 h-11 flex items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                        className="w-8 h-8 flex items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                         aria-label="메뉴"
                         aria-expanded={isMenuOpen}
                       >
@@ -2297,7 +2297,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDeleteCard(id); }}
-                              className="w-full text-left px-3 py-3 min-h-11 text-base text-red-600 hover:bg-red-50 rounded-t-lg btn-tap"
+                              className="w-full text-left px-3 py-1 text-base text-red-600 hover:bg-red-50 rounded-t-lg btn-tap"
                             >
                               {Boolean((myInfo.uid ?? getCurrentUserUid()) && data.createdByUid && (myInfo.uid ?? getCurrentUserUid()) === data.createdByUid)
                                 ? "삭제"
@@ -2306,7 +2306,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleShareCard(id); }}
-                              className="w-full text-left px-3 py-3 min-h-11 text-base text-slate-700 hover:bg-slate-50 rounded-b-lg btn-tap"
+                              className="w-full text-left px-3 py-1 text-base text-slate-700 hover:bg-slate-50 rounded-b-lg btn-tap"
                             >
                               카톡으로 보내기
                             </button>
@@ -2318,22 +2318,22 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 );
               })}
             </ul>
-            <div className="px-2 pt-4 space-y-2">
+            <div className="px-2 pt-1 space-y-1">
               <button
                 type="button"
                 onClick={() => setJoinLinkOpen((open) => !open)}
-                className="w-full py-3 min-h-11 rounded-full text-base font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 btn-tap"
+                className="w-full py-1 rounded-full text-base font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 btn-tap"
               >
                 링크로 들어가기
               </button>
               {joinLinkOpen && (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   <input
                     type="text"
                     value={joinLinkInput}
                     onChange={(e) => setJoinLinkInput(e.target.value)}
                     placeholder="받은 링크를 붙여 넣으세요"
-                    className="w-full py-3 px-3 text-base rounded-xl border border-[#d2d2d7] bg-white"
+                    className="w-full py-1 px-3 text-base rounded-xl border border-[#d2d2d7] bg-white"
                     aria-label="받은 링크"
                   />
                   <button
@@ -2349,7 +2349,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       setJoinLinkInput("");
                       processShareAndOpenDetail(id);
                     }}
-                    className="w-full py-3 rounded-full text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                    className="w-full py-1 rounded-full text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
                   >
                     들어가기
                   </button>
@@ -2365,7 +2365,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {selectedGameId && (
         <div
           key="record-detail"
-          className="absolute inset-0 pt-4 bg-[var(--background)]"
+          className="absolute inset-0 pt-1 bg-[var(--background)]"
           style={{
             overflowY: "auto",
             WebkitOverflowScrolling: "touch",
@@ -2376,9 +2376,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
           }}
           onTouchStart={(e) => e.stopPropagation()}
         >
-        <div className="space-y-4 pb-8">
+        <div className="space-y-1 pb-2">
         {/* 선택한 경기: 경기 요약·명단·대진·현황·랭킹 */}
-          <div className="flex items-center justify-between gap-2 pb-2">
+          <div className="flex items-center justify-between gap-2 pb-0">
             <button
               type="button"
               onClick={async () => {
@@ -2446,7 +2446,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 }, 250);
               }}
               disabled={recordDetailClosing}
-              className="inline-flex items-center min-h-11 text-base font-medium text-[#0071e3] hover:underline disabled:opacity-70 disabled:pointer-events-none"
+              className="inline-flex items-center py-0.5 text-base font-medium text-[#0071e3] hover:underline disabled:opacity-70 disabled:pointer-events-none"
             >
               ← 목록으로
             </button>
@@ -2467,7 +2467,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onClick={() => {
                     if (!locked) setDetailStep(s.id);
                   }}
-                  className={`flex-1 py-3 text-lg font-semibold rounded-xl btn-tap ${active ? "text-[#0071e3]" : locked ? "text-slate-300" : "text-slate-500"}`}
+                  className={`flex-1 py-1 text-lg font-semibold rounded-xl btn-tap ${active ? "text-[#0071e3]" : locked ? "text-slate-300" : "text-slate-500"}`}
                 >
                   {s.label}{active ? " ●" : ""}
                 </button>
@@ -2478,7 +2478,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           {detailStep === "people" && (
           <>
           {/* 경기 요약 카드 */}
-          <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden mt-2 card-app card-app-interactive">
+          <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden mt-1 card-app card-app-interactive">
             <div className="px-4 py-0.5 border-b border-[#e8eef6] flex items-center justify-between gap-2">
               <h3 className="text-lg font-semibold text-slate-800 leading-tight">경기 요약</h3>
               {!isGameSummaryEditable && <span className="text-base text-slate-400">만든이만 수정 가능</span>}
@@ -2590,11 +2590,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
           </div>
 
           {/* 경기 명단 카드 - 报名名单 스타일 */}
-          <div id="section-members" className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden mt-2 scroll-mt-2 card-app card-app-interactive">
-            <div className="px-2 py-1.5 border-b border-[#e8eef6] flex items-center justify-between">
+          <div id="section-members" className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden mt-1 scroll-mt-1 card-app card-app-interactive">
+            <div className="px-2 py-0.5 border-b border-[#e8eef6] flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-slate-800">경기 명단</h3>
-                <p className="text-base text-slate-600 mt-1">
+                <p className="text-base text-slate-600 mt-0 leading-tight">
                   {hasSavedScore
                     ? "점수가 있으면 명단을 바꾸지 않습니다."
                     : "이름을 넣고, 카톡으로 보내 사람을 모으세요."}
@@ -2633,13 +2633,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         <button
                           type="button"
                           onClick={() => removeMember(m.id)}
-                          className="w-10 h-10 flex items-center justify-center text-base text-slate-500 hover:bg-red-100 hover:text-red-600"
+                          className="w-7 h-7 flex items-center justify-center text-base text-slate-500 hover:bg-red-100 hover:text-red-600"
                           aria-label={`${m.name} 제거`}
                         >
                           ×
                         </button>
                         ) : (
-                          <span className="inline-block w-10 h-10" />
+                          <span className="inline-block w-7 h-7" />
                         )}
                       </td>
                     </tr>
@@ -2648,7 +2648,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               </table>
             </div>
             {isGameOwner && !hasSavedScore && (
-            <div className="border-t border-[#e8eef6] px-2 py-2">
+            <div className="border-t border-[#e8eef6] px-2 py-1">
               <div className="flex flex-row items-center gap-1.5 flex-nowrap overflow-hidden">
                 <span className="text-base font-medium text-slate-600 shrink-0 whitespace-nowrap">인원 추가</span>
                 <input
@@ -2657,13 +2657,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   onChange={(e) => setNewMemberName(e.target.value)}
                   placeholder="이름"
                   aria-label="이름"
-                  className="flex-1 min-w-0 h-11 px-2 py-0 text-base rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] box-border"
+                  className="flex-1 min-w-0 h-8 px-2 py-0 text-base rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3] box-border"
                 />
                 <select
                   value={newMemberGender}
                   onChange={(e) => setNewMemberGender(e.target.value as "M" | "F")}
                   aria-label="성별"
-                  className="shrink-0 w-14 h-11 px-1.5 py-0 text-base rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  className="shrink-0 w-14 h-8 px-1.5 py-0 text-base rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                 >
                   <option value="M">남</option>
                   <option value="F">여</option>
@@ -2672,7 +2672,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   value={newMemberGrade}
                   onChange={(e) => setNewMemberGrade(e.target.value as Grade)}
                   aria-label="급수"
-                  className="shrink-0 w-12 h-11 px-1.5 py-0 text-base rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  className="shrink-0 w-12 h-8 px-1.5 py-0 text-base rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                 >
                   <option value="A">A</option>
                   <option value="B">B</option>
@@ -2694,14 +2694,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     addMember(trimmed, newMemberGender, newMemberGrade);
                     setNewMemberName("");
                   }}
-                  className="shrink-0 h-11 px-3 rounded-full text-base font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
+                  className="shrink-0 h-8 px-3 rounded-full text-base font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
                 >
                   추가
                 </button>
               </div>
             </div>
             )}
-            <div className="border-t border-[#e8eef6] px-2 py-3 space-y-2">
+            <div className="border-t border-[#e8eef6] px-2 py-1 space-y-1">
               {!isOnRoster && !hasSavedScore && (
               <button
                 type="button"
@@ -2731,7 +2731,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     enrollGameInMyList(effectiveGameId);
                   }
                 }}
-                className="w-full py-3 min-h-11 rounded-full text-base font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
+                className="w-full py-1 rounded-full text-base font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
               >
                 나도 넣기
               </button>
@@ -2740,7 +2740,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <button
                 type="button"
                 onClick={() => handleShareCard(effectiveGameId)}
-                className={`w-full py-4 rounded-full text-lg font-semibold btn-tap ${
+                className={`w-full py-2 rounded-full text-lg font-semibold btn-tap ${
                   isGameOwner && matches.length === 0 && members.length >= gameMode.minPlayers && members.length <= gameMode.maxPlayers && !hasSavedScore
                     ? "text-[#0071e3] bg-white border-2 border-[#0071e3]"
                     : "text-white bg-[#0071e3] hover:bg-[#0077ed]"
@@ -2768,7 +2768,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   }
                   doMatch();
                 }}
-                className="w-full py-4 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
+                className="w-full py-2 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap disabled:opacity-50 disabled:pointer-events-none disabled:cursor-not-allowed"
               >
                 대진 만들기
               </button>
@@ -2790,12 +2790,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
           {detailStep === "draw" && (
           <>
           {isGameOwner && rosterOutOfSync && !hasSavedScore && matches.length > 0 && (
-            <div className="rounded-3xl bg-amber-50 border border-amber-200 px-3 py-3 space-y-2">
+            <div className="rounded-3xl bg-amber-50 border border-amber-200 px-3 py-1 space-y-1">
               <p className="text-base text-amber-900 text-center">늦게 들어온 사람이 있습니다.</p>
               <button
                 type="button"
                 onClick={() => setShowRegenerateConfirm(true)}
-                className="w-full py-4 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
+                className="w-full py-2 rounded-full text-lg font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed] btn-tap"
               >
                 대진 다시 만들기
               </button>
@@ -2805,7 +2805,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             <button
               type="button"
               onClick={() => setShowRegenerateConfirm(true)}
-              className="w-full py-4 rounded-full text-lg font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] btn-tap"
+              className="w-full py-2 rounded-full text-lg font-semibold text-[#0071e3] bg-white border-2 border-[#0071e3] btn-tap"
             >
               대진 다시 만들기
             </button>
@@ -2816,16 +2816,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
           {(detailStep === "draw" || detailStep === "score") && (
           <>
           {detailStep === "score" && rosterOutOfSync && (
-            <p className="text-base text-amber-800 text-center px-2 py-2">대진을 다시 만든 뒤에 점수를 적을 수 있습니다.</p>
+            <p className="text-base text-amber-800 text-center px-2 py-0.5">대진을 다시 만든 뒤에 점수를 적을 수 있습니다.</p>
           )}
           {detailStep === "score" && !isOnRoster && !rosterOutOfSync && (
-            <p className="text-base text-slate-600 text-center px-2 py-2">명단에 있어야 점수를 적을 수 있습니다.</p>
+            <p className="text-base text-slate-600 text-center px-2 py-0.5">명단에 있어야 점수를 적을 수 있습니다.</p>
           )}
           {/* 매치 목록 - 1줄씩 */}
-          <section id="section-matches" className="scroll-mt-2">
+          <section id="section-matches" className="scroll-mt-1">
           {matches.length > 0 && (
-            <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden mt-2 card-app card-app-interactive">
-              <div className="px-2 py-1.5 border-b border-[#e8eef6]">
+            <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden mt-1 card-app card-app-interactive">
+              <div className="px-2 py-0.5 border-b border-[#e8eef6]">
                 <h3 className="text-lg font-semibold text-slate-800">{detailStep === "score" ? "점수" : "대진표"}</h3>
                 {detailStep === "score" && (() => {
                   const ids = new Set<string>();
@@ -2973,7 +2973,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             updateScoreInput(m.id, "s1", v);
                           }}
                           disabled={!canRecordScores}
-                          className="w-11 h-10 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-center text-lg font-semibold font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
+                          className="w-11 h-8 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-center text-lg font-semibold font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
                           aria-label="팀1 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
@@ -2991,7 +2991,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             updateScoreInput(m.id, "s2", v);
                           }}
                           disabled={!canRecordScores}
-                          className="w-11 h-10 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-center text-lg font-semibold font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
+                          className="w-11 h-8 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 text-center text-lg font-semibold font-numeric focus:outline-none focus:ring-1 focus:ring-blue-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-60"
                           aria-label="팀2 득점"
                           title={`0~${scoreLimit}점 (경기 설정 기준)`}
                         />
@@ -3029,7 +3029,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                       type="button"
                       onClick={() => saveResult(m.id)}
                       disabled={!canRecordScores}
-                      className="shrink-0 min-w-[3.5rem] min-h-11 px-2 py-3 rounded-full text-base font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="shrink-0 min-w-[3.5rem] px-2 py-1 rounded-full text-base font-semibold leading-none text-white bg-[#0071e3] hover:bg-[#0077ed] transition-colors flex flex-row items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       저장
                     </button>
@@ -3056,14 +3056,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
         {detailStep === "score" && (
         <>
         {/* 경기 결과(랭킹) 카드 */}
-        <section id="section-ranking" className="scroll-mt-2">
+        <section id="section-ranking" className="scroll-mt-1">
           <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-            <div className="px-2 py-1.5 border-b border-[#e8eef6]">
+            <div className="px-2 py-0.5 border-b border-[#e8eef6]">
               <h3 className="text-lg font-semibold text-slate-800">경기 결과</h3>
               <p className="text-base text-slate-500 mt-0.5">경기 현황에서 진행한 경기 점수로 산출됩니다. 승수·득실차·급수 순으로 정렬됩니다.</p>
             </div>
             {matches.length === 0 ? (
-              <p className="px-2 py-4 text-base text-slate-500 text-center">점수를 적으면 여기에 순위가 나옵니다.</p>
+              <p className="px-2 py-1 text-base text-slate-500 text-center">점수를 적으면 여기에 순위가 나옵니다.</p>
             ) : (
             <ul className="divide-y divide-slate-100">
               {ranking.map((m, i) => {
@@ -3154,21 +3154,21 @@ export function GameView({ gameId }: { gameId: string | null }) {
         </div>
         )}
         {navView === "myinfo" && (
-          <div key="myinfo" className="pt-4 space-y-2 animate-panel-enter">
+          <div key="myinfo" className="pt-1 space-y-1 animate-panel-enter">
             {!isProfileComplete && (
               <p className="text-base text-slate-600 px-1">이름과 생년월일을 저장하면 경기를 이용할 수 있습니다.</p>
             )}
             {/* 로그인 상태: 전화번호 + 로그아웃 */}
             {loginGatePassed ? (
               <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-                <div className="px-3 py-3 space-y-3">
+                <div className="px-3 py-1 space-y-1">
                   <p className="text-base text-slate-500">
                     로그인: 전화번호 ({getCurrentPhoneUser()?.phoneNumber || myInfo.phoneNumber || ""})
                   </p>
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="w-full px-4 py-3 min-h-11 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
+                    className="w-full px-4 py-1 rounded-full text-base font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors btn-tap"
                   >
                     로그아웃
                   </button>
@@ -3179,9 +3179,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
             {/* 인사 카드. 발견 메뉴·아바타 꾸미기는 없음 */}
             {loginGatePassed && (
               <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-                <div className="px-4 py-4">
+                <div className="px-3 py-1">
                   <p className="text-base text-slate-500">안녕하세요</p>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-0">
                     <p className="min-w-0 flex-1 text-lg font-semibold text-slate-800 truncate">
                       <span className="tracking-tighter inline-flex items-center gap-0" style={{ letterSpacing: "-0.02em" }}>
                         {myInfo.name || "이름 없음"}
@@ -3194,7 +3194,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     <button
                       type="button"
                       onClick={() => setProfileEditOpen(true)}
-                      className="shrink-0 px-3 py-3 min-h-11 rounded-full text-base font-medium text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 transition-colors btn-tap"
+                      className="shrink-0 px-3 py-1 rounded-full text-base font-medium text-[#0071e3] bg-white border-2 border-[#0071e3] hover:bg-[#0071e3]/5 transition-colors btn-tap"
                     >
                       프로필 수정
                     </button>
@@ -3204,19 +3204,19 @@ export function GameView({ gameId }: { gameId: string | null }) {
             )}
 
             <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-              <div className="px-2 py-2 space-y-4">
+              <div className="px-2 py-1 space-y-1">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-700 mb-1.5">나의 전적</h3>
                   <hr className="border-t border-slate-200 my-2" aria-hidden />
-                  <p className="text-slate-500 text-base py-2">각 경기의 결과 순위에서 확인합니다.</p>
+                  <p className="text-slate-500 text-base py-0">각 경기의 결과 순위에서 확인합니다.</p>
                 </div>
               </div>
             </div>
 
             <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-              <div className="px-3 py-3 space-y-2">
+              <div className="px-3 py-1 space-y-1">
                 <h3 className="text-lg font-semibold text-slate-800">사용법</h3>
-                <ul className="text-base text-slate-600 leading-relaxed list-disc pl-5 space-y-2">
+                <ul className="text-base text-slate-600 leading-tight list-disc pl-5 space-y-1">
                   <li>오늘 경기에서 「경기 만들기」를 누르거나, 받은 링크로 들어갑니다.</li>
                   <li>사람 화면에서 「카톡으로 보내기」로 모으고, 인원이 되면 「대진 만들기」를 누릅니다.</li>
                   <li>대진이 생기면 점수를 적습니다. 막히면 짧은 안내만 나옵니다.</li>
@@ -3225,7 +3225,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </div>
 
             <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-              <div className="px-3 py-3 space-y-2">
+              <div className="px-3 py-1 space-y-1">
                 <h3 className="text-lg font-semibold text-slate-800">문의</h3>
                 <a href={`mailto:${CONTACT_EMAIL}`} className="text-base text-[#0071e3] hover:underline break-all">
                   {CONTACT_EMAIL}
@@ -3235,13 +3235,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
             {loginGatePassed ? (
               <div className="rounded-3xl bg-white border border-[#e8eef6] overflow-hidden card-app card-app-interactive">
-                <div className="px-3 py-3 space-y-2">
+                <div className="px-3 py-1 space-y-1">
                   <h3 className="text-lg font-semibold text-slate-800">계정</h3>
                   <p className="text-base text-slate-500">탈퇴하면 이 계정의 프로필, 경기 목록, 내가 만든 공유 경기가 삭제됩니다.</p>
                   <button
                     type="button"
                     onClick={() => setShowWithdrawConfirm(true)}
-                    className="w-full px-4 py-3 min-h-11 rounded-full text-base font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors btn-tap"
+                    className="w-full px-4 py-1 rounded-full text-base font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors btn-tap"
                   >
                     계정 탈퇴
                   </button>
@@ -3261,7 +3261,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
           aria-modal="true"
           onTouchStart={(e) => e.stopPropagation()}
         >
-          <header className="flex items-center gap-2 shrink-0 px-3 py-3 border-b border-[#e8eef6] bg-[#f7faff]">
+          <header className="flex items-center gap-2 shrink-0 px-3 py-1 border-b border-[#e8eef6] bg-[#f7faff]">
             <button
               type="button"
               onClick={() => {
@@ -3273,7 +3273,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 }, 250);
               }}
               disabled={profileEditClosing}
-              className="flex items-center gap-1 px-2 py-3 min-h-11 rounded-full text-base font-medium text-slate-700 hover:bg-slate-100 transition-colors btn-tap disabled:opacity-70 disabled:pointer-events-none"
+              className="flex items-center gap-1 px-2 py-1 rounded-full text-base font-medium text-slate-700 hover:bg-slate-100 transition-colors btn-tap disabled:opacity-70 disabled:pointer-events-none"
               aria-label="뒤로가기"
             >
               <span aria-hidden>←</span>
@@ -3281,7 +3281,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </button>
             <h2 className="text-lg font-semibold text-slate-800 flex-1 text-center pr-12">프로필 수정</h2>
           </header>
-          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide-y px-2.5 py-3 space-y-2" data-scrollbar-hide style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide-y px-2.5 py-1 space-y-1" data-scrollbar-hide style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
             <div className="grid gap-1.5">
               <div className="flex items-center gap-1.5">
                 <label className="text-base font-medium text-slate-600 shrink-0 w-28">이름</label>
@@ -3294,7 +3294,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     saveMyInfo(next);
                   }}
                   placeholder="이름"
-                  className="flex-1 min-w-0 px-2 py-3 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="이름"
                 />
               </div>
@@ -3307,7 +3307,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setMyInfo(next);
                     saveMyInfo(next);
                   }}
-                  className="flex-1 min-w-0 px-2 py-3 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                   aria-label="성별"
                 >
                   <option value="M">남</option>
@@ -3323,7 +3323,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setMyInfo(next);
                     saveMyInfo(next);
                   }}
-                  className="flex-1 min-w-0 px-2 py-3 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25"
                   aria-label="급수"
                 >
                   <option value="A">A</option>
@@ -3339,7 +3339,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   value={myInfo.phoneNumber ?? getCurrentPhoneUser()?.phoneNumber ?? ""}
                   readOnly
                   placeholder="로그인 전화번호"
-                  className="flex-1 min-w-0 px-2 py-3 rounded-lg border border-[#d2d2d7] bg-slate-100 text-[#1d1d1f] text-base cursor-default"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-slate-100 text-[#1d1d1f] text-base cursor-default"
                   aria-label="전화번호"
                   title="로그인에 사용한 전화번호입니다."
                 />
@@ -3354,7 +3354,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     setMyInfo(next);
                     saveMyInfo(next);
                   }}
-                  className="flex-1 min-w-0 px-2 py-3 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
                   aria-label="생년월일"
                 />
               </div>
@@ -3363,7 +3363,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <button
                   type="button"
                   onClick={uploadProfileToFirestore}
-                  className="shrink-0 px-3 py-3 min-h-11 rounded-full text-base font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
+                  className="shrink-0 px-3 py-1 rounded-full text-base font-medium bg-[#0071e3] text-white hover:bg-[#0077ed] transition-colors btn-tap whitespace-nowrap"
                 >
                   저장
                 </button>
@@ -3381,7 +3381,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
       </main>
 
       {/* 하단 네비 - 흰 카드, 선택 칸은 아이콘·글만 파랑 */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#e8eef6] flex justify-start gap-0 px-2 py-2">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-[#e8eef6] flex justify-start gap-0 px-2 py-0.5">
         <button
           type="button"
           onClick={() => {
@@ -3394,9 +3394,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
             setNavView("record");
             setSelectedGameId(null);
           }}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "record" ? "text-[#0071e3] font-semibold" : "text-[#6e6e73]"}`}
+          className={`flex flex-col items-center gap-0 py-0.5 px-3 min-w-0 nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "record" ? "text-[#0071e3] font-semibold" : "text-[#6e6e73]"}`}
         >
-          <NavIconGameList className="w-10 h-10 shrink-0" />
+          <NavIconGameList className="w-7 h-7 shrink-0" />
           <span className="text-base font-medium leading-tight">오늘</span>
         </button>
         <button
@@ -3410,31 +3410,31 @@ export function GameView({ gameId }: { gameId: string | null }) {
             }
             setNavView("setting");
           }}
-          className={`flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "setting" ? "text-[#0071e3] font-semibold" : "text-[#6e6e73]"}`}
+          className={`flex flex-col items-center gap-0 py-0.5 px-3 min-w-0 nav-tab btn-tap ${!isProfileComplete ? "opacity-60 text-[#9ca3af]" : ""} ${navView === "setting" ? "text-[#0071e3] font-semibold" : "text-[#6e6e73]"}`}
         >
-          <NavIconGameMode className="w-10 h-10 shrink-0" />
+          <NavIconGameMode className="w-7 h-7 shrink-0" />
           <span className="text-base font-medium leading-tight">새 경기</span>
         </button>
         <button
           type="button"
           onClick={() => setNavView("myinfo")}
-          className={`relative flex flex-col items-center gap-0.5 py-2 px-4 min-w-0 nav-tab btn-tap ${navView === "myinfo" ? "text-[#0071e3] font-semibold" : "text-[#6e6e73]"}`}
+          className={`relative flex flex-col items-center gap-0 py-0.5 px-3 min-w-0 nav-tab btn-tap ${navView === "myinfo" ? "text-[#0071e3] font-semibold" : "text-[#6e6e73]"}`}
         >
-          <NavIconMyInfo className="w-10 h-10 shrink-0" filled={isProfileComplete} />
+          <NavIconMyInfo className="w-7 h-7 shrink-0" filled={isProfileComplete} />
           <span className="text-base font-medium leading-tight">내 정보</span>
         </button>
       </nav>
 
       {/* 경기 생성 전 확인 모달 */}
       {shareToast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-3 rounded-full bg-slate-800 text-white text-base shadow-lg animate-scale-in" role="status">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 px-3 py-1 rounded-full bg-slate-800 text-white text-base shadow-lg animate-scale-in" role="status">
           {shareToast}
         </div>
       )}
       {showRegenerateConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-fade-in" aria-modal="true" role="alertdialog" aria-labelledby="regenerate-confirm-title">
           <div
-            className="bg-white rounded-3xl shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6] max-w-sm w-full p-4 space-y-3 animate-scale-in"
+            className="bg-white rounded-3xl shadow-[0_12px_32px_rgba(47,91,160,0.16)] border border-[#e8eef6] max-w-sm w-full p-2 space-y-1 animate-scale-in"
             onTouchStart={(e) => { overlayTouchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
             onTouchEnd={(e) => {
               const dy = e.changedTouches[0].clientY - overlayTouchStartRef.current.y;
@@ -3442,14 +3442,14 @@ export function GameView({ gameId }: { gameId: string | null }) {
               if (dy > 50 && Math.abs(dy) > Math.abs(dx)) setShowRegenerateConfirm(false);
             }}
           >
-            <p id="regenerate-confirm-title" className="text-base text-slate-700 leading-relaxed">
+            <p id="regenerate-confirm-title" className="text-base text-slate-700 leading-tight">
               대진을 다시 만들면 지금 대진이 바뀝니다. 계속할까요?
             </p>
             <div className="flex gap-2 justify-end">
               <button
                 type="button"
                 onClick={() => setShowRegenerateConfirm(false)}
-                className="px-4 py-3 rounded-full text-base font-medium text-slate-700 bg-slate-100 hover:bg-slate-200"
+                className="px-3 py-1 rounded-full text-base font-medium text-slate-700 bg-slate-100 hover:bg-slate-200"
               >
                 취소
               </button>
@@ -3459,7 +3459,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                   doMatch();
                   setShowRegenerateConfirm(false);
                 }}
-                className="px-4 py-3 rounded-full text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed]"
+                className="px-3 py-1 rounded-full text-base font-semibold text-white bg-[#0071e3] hover:bg-[#0077ed]"
               >
                 계속
               </button>

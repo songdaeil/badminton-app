@@ -87,25 +87,25 @@ export function PwaInstallPrompt() {
     <>
       {showBanner && (
         <div
-          className="fixed top-0 left-0 right-0 z-30 max-w-md mx-auto px-3 pt-2 pb-2 safe-area-pt"
+          className="fixed top-0 left-0 right-0 z-30 max-w-md mx-auto px-3 pt-1 pb-1 safe-area-pt"
           role="region"
           aria-label="앱 설치 안내"
         >
-          <div className="flex items-center gap-2 rounded-3xl bg-[#0071e3] text-white shadow-[0_8px_24px_rgba(47,91,160,0.24)] px-3 py-3 text-base">
+          <div className="flex items-center gap-2 rounded-3xl bg-[#0071e3] text-white shadow-[0_8px_24px_rgba(47,91,160,0.24)] px-3 py-1 text-base">
             <span className="flex-1 min-w-0 font-medium truncate">
               앱처럼 쓰려면 홈 화면에 추가하세요
             </span>
             <button
               type="button"
               onClick={handleInstallClick}
-              className="shrink-0 px-3 py-2.5 min-h-11 rounded-full font-semibold bg-white text-[#0071e3] hover:bg-slate-100 transition-colors"
+              className="shrink-0 px-3 py-1 rounded-full font-semibold bg-white text-[#0071e3] hover:bg-slate-100 transition-colors"
             >
               추가하기
             </button>
             <button
               type="button"
               onClick={handleDismiss}
-              className="shrink-0 w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors text-base"
+              className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors text-base"
               aria-label="닫기"
             >
               ×
@@ -121,22 +121,22 @@ export function PwaInstallPrompt() {
           role="dialog"
           aria-labelledby="pwa-ios-title"
         >
-          <div className="w-full max-w-sm rounded-t-3xl bg-white shadow-[0_12px_32px_rgba(47,91,160,0.16)] p-4 pb-8 safe-area-pb animate-slide-up">
-            <h2 id="pwa-ios-title" className="text-base font-semibold text-slate-800 mb-2">
+          <div className="w-full max-w-sm rounded-t-3xl bg-white shadow-[0_12px_32px_rgba(47,91,160,0.16)] p-2 pb-3 safe-area-pb animate-slide-up">
+            <h2 id="pwa-ios-title" className="text-base font-semibold text-slate-800 mb-0.5">
               홈 화면에 추가
             </h2>
-            <ol className="text-base text-slate-600 space-y-2 list-decimal list-inside mb-4">
+            <ol className="text-base text-slate-600 space-y-1 list-decimal list-inside mb-1">
               <li>Safari 하단 <strong>공유</strong> 버튼(□↑)을 누르세요.</li>
               <li>목록에서 <strong>「홈 화면에 추가」</strong>를 누르세요.</li>
               <li>이름 확인 후 <strong>「추가」</strong>를 누르면 끝입니다.</li>
             </ol>
-            <p className="text-base text-slate-500 mb-4">
+            <p className="text-base text-slate-500 mb-1">
               Chrome이 아닌 <strong>Safari</strong>에서 열어야 이 메뉴가 보입니다.
             </p>
             <button
               type="button"
               onClick={closeIosModal}
-              className="w-full py-3 min-h-11 rounded-full font-medium bg-[#0071e3] text-white"
+              className="w-full py-1 rounded-full font-medium bg-[#0071e3] text-white"
             >
               확인
             </button>
@@ -151,23 +151,23 @@ export function PwaInstallPrompt() {
           role="dialog"
           aria-labelledby="pwa-manual-title"
         >
-          <div className="w-full max-w-sm rounded-t-3xl bg-white shadow-[0_12px_32px_rgba(47,91,160,0.16)] p-4 pb-8 safe-area-pb animate-slide-up">
-            <h2 id="pwa-manual-title" className="text-base font-semibold text-slate-800 mb-2">
+          <div className="w-full max-w-sm rounded-t-3xl bg-white shadow-[0_12px_32px_rgba(47,91,160,0.16)] p-2 pb-3 safe-area-pb animate-slide-up">
+            <h2 id="pwa-manual-title" className="text-base font-semibold text-slate-800 mb-0.5">
               앱으로 설치하기
             </h2>
-            <p className="text-base text-slate-600 mb-3">
+            <p className="text-base text-slate-600 mb-1">
               <strong>Chrome</strong>: 주소창 오른쪽의 <strong>⊕ 설치</strong> 아이콘을 누르거나, 메뉴(⋮) → <strong>앱 설치</strong> / <strong>홈 화면에 추가</strong>를 선택하세요.
             </p>
-            <p className="text-base text-slate-600 mb-4">
+            <p className="text-base text-slate-600 mb-1">
               <strong>Edge</strong>: 주소창 옆 <strong>⊕</strong> 또는 메뉴 → <strong>앱</strong> → 이 사이트를 앱으로 설치하세요.
             </p>
-            <p className="text-base text-slate-500 mb-4">
+            <p className="text-base text-slate-500 mb-1">
               HTTPS로 배포된 사이트에서만 설치 버튼이 보일 수 있습니다.
             </p>
             <button
               type="button"
               onClick={closeManualModal}
-              className="w-full py-3 min-h-11 rounded-full font-medium bg-[#0071e3] text-white"
+              className="w-full py-1 rounded-full font-medium bg-[#0071e3] text-white"
             >
               확인
             </button>
