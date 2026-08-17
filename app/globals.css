@@ -24,15 +24,11 @@ html {
   min-height: 100dvh;
 }
 
-/* 유동 글자 크기도 한 단계씩 키움 */
-.text-fluid-xs {
-  font-size: clamp(0.75rem, 2.8vw, 0.875rem);
-}
-.text-fluid-sm {
-  font-size: clamp(0.8125rem, 3.2vw, 0.9375rem);
-}
+/* 본문 글자: html 기준(16–22px)과 맞춤. 작은 단계는 쓰지 않음 */
+.text-fluid-xs,
+.text-fluid-sm,
 .text-fluid-base {
-  font-size: clamp(0.9375rem, 3.75vw, 1.0625rem);
+  font-size: 1rem;
 }
 
 @theme inline {

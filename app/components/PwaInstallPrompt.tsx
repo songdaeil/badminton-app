@@ -91,21 +91,21 @@ export function PwaInstallPrompt() {
           role="region"
           aria-label="앱 설치 안내"
         >
-          <div className="flex items-center gap-2 rounded-xl bg-[#0071e3] text-white shadow-lg px-3 py-2.5 text-sm">
+          <div className="flex items-center gap-2 rounded-xl bg-[#0071e3] text-white shadow-lg px-3 py-3 text-base">
             <span className="flex-1 min-w-0 font-medium truncate">
               앱처럼 쓰려면 홈 화면에 추가하세요
             </span>
             <button
               type="button"
               onClick={handleInstallClick}
-              className="shrink-0 px-3 py-1.5 rounded-lg font-semibold bg-white text-[#0071e3] hover:bg-slate-100 transition-colors"
+              className="shrink-0 px-3 py-2.5 min-h-11 rounded-lg font-semibold bg-white text-[#0071e3] hover:bg-slate-100 transition-colors"
             >
               추가하기
             </button>
             <button
               type="button"
               onClick={handleDismiss}
-              className="shrink-0 p-1 rounded-full hover:bg-white/20 transition-colors"
+              className="shrink-0 w-11 h-11 flex items-center justify-center rounded-full hover:bg-white/20 transition-colors text-base"
               aria-label="닫기"
             >
               ×
@@ -125,18 +125,18 @@ export function PwaInstallPrompt() {
             <h2 id="pwa-ios-title" className="text-base font-semibold text-slate-800 mb-2">
               홈 화면에 추가
             </h2>
-            <ol className="text-sm text-slate-600 space-y-2 list-decimal list-inside mb-4">
+            <ol className="text-base text-slate-600 space-y-2 list-decimal list-inside mb-4">
               <li>Safari 하단 <strong>공유</strong> 버튼(□↑)을 누르세요.</li>
               <li>목록에서 <strong>「홈 화면에 추가」</strong>를 누르세요.</li>
               <li>이름 확인 후 <strong>「추가」</strong>를 누르면 끝입니다.</li>
             </ol>
-            <p className="text-xs text-slate-500 mb-4">
+            <p className="text-base text-slate-500 mb-4">
               Chrome이 아닌 <strong>Safari</strong>에서 열어야 이 메뉴가 보입니다.
             </p>
             <button
               type="button"
               onClick={closeIosModal}
-              className="w-full py-2.5 rounded-xl font-medium bg-[#0071e3] text-white"
+              className="w-full py-3 min-h-11 rounded-xl font-medium bg-[#0071e3] text-white"
             >
               확인
             </button>
@@ -155,19 +155,19 @@ export function PwaInstallPrompt() {
             <h2 id="pwa-manual-title" className="text-base font-semibold text-slate-800 mb-2">
               앱으로 설치하기
             </h2>
-            <p className="text-sm text-slate-600 mb-3">
+            <p className="text-base text-slate-600 mb-3">
               <strong>Chrome</strong>: 주소창 오른쪽의 <strong>⊕ 설치</strong> 아이콘을 누르거나, 메뉴(⋮) → <strong>앱 설치</strong> / <strong>홈 화면에 추가</strong>를 선택하세요.
             </p>
-            <p className="text-sm text-slate-600 mb-4">
+            <p className="text-base text-slate-600 mb-4">
               <strong>Edge</strong>: 주소창 옆 <strong>⊕</strong> 또는 메뉴 → <strong>앱</strong> → 이 사이트를 앱으로 설치하세요.
             </p>
-            <p className="text-xs text-slate-500 mb-4">
+            <p className="text-base text-slate-500 mb-4">
               HTTPS로 배포된 사이트에서만 설치 버튼이 보일 수 있습니다.
             </p>
             <button
               type="button"
               onClick={closeManualModal}
-              className="w-full py-2.5 rounded-xl font-medium bg-[#0071e3] text-white"
+              className="w-full py-3 min-h-11 rounded-xl font-medium bg-[#0071e3] text-white"
             >
               확인
             </button>

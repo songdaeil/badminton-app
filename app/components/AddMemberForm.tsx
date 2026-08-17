@@ -37,14 +37,14 @@ export function AddMemberForm({
           onChange={(e) => setName(e.target.value)}
           placeholder="이름"
           aria-label="이름"
-          className="w-full px-2 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+          className="w-full px-2 py-3 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] placeholder:text-[#6e6e73] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
         />
       </div>
       <select
         value={gender}
         onChange={(e) => setGender(e.target.value as "M" | "F")}
         aria-label="성별"
-        className="shrink-0 w-14 px-1.5 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+        className="shrink-0 w-14 px-1.5 py-3 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
       >
         <option value="M">남</option>
         <option value="F">여</option>
@@ -53,7 +53,7 @@ export function AddMemberForm({
         value={grade}
         onChange={(e) => setGrade(e.target.value as Grade)}
         aria-label="급수"
-        className="shrink-0 w-12 px-1.5 py-1.5 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+        className="shrink-0 w-12 px-1.5 py-3 rounded-xl border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-base focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
       >
         <option value="A">A</option>
         <option value="B">B</option>
@@ -63,12 +63,12 @@ export function AddMemberForm({
       <button
         type="submit"
         disabled={atLimit}
-        className="shrink-0 py-1.5 px-3 rounded-lg font-medium text-white text-sm hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="shrink-0 py-3 px-3 min-h-11 rounded-lg font-medium text-white text-base hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
         style={{ backgroundColor: primaryColor }}
       >
         추가
       </button>
-      {atLimit && <p className="w-full text-xs text-slate-400">경기 인원은 최대 {maxMembers}명까지입니다.</p>}
+      {atLimit && <p className="w-full text-base text-slate-400">경기 인원은 최대 {maxMembers}명까지입니다.</p>}
     </form>
   );
 }
