@@ -2,29 +2,18 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { addGameToList, buildGameDataPayload, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, loadMyInfo, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
+import { addGameToList, buildGameDataPayload, createGameId, DEFAULT_GAME_SETTINGS, DEFAULT_MYINFO, loadGame, loadGameList, removeGameFromList, saveGame, saveMyInfo } from "@/lib/game-storage";
 import type { GameData, GameSettings, MyInfo } from "@/lib/game-storage";
 import { ensureFirebase, getAuthInstance, getDb } from "@/lib/firebase";
 import { getCurrentUserUid, getRemoteProfile, setRemoteProfile } from "@/lib/profile-sync";
 import { addSharedGame, deleteSharedGame, getFirestorePayloadSize, getSharedGame, isSyncAvailable, setSharedGame, shouldSkipSharedGameUpload, subscribeSharedGame, uploadSharedGameIfNeeded } from "@/lib/sync";
 import {
-  getCurrentEmailUser,
-  isEmailAuthAvailable,
-  sendVerificationEmailAgain,
-  signInWithEmail as signInWithEmailAuth,
-  signOutEmail,
-  signUpWithEmail,
-  subscribeEmailAuthState,
-} from "@/lib/email-auth";
-import type { AuthUserSnapshot } from "@/lib/email-auth";
-import {
   confirmPhoneCode,
   getCurrentPhoneUser,
-  isPhoneAuthAvailable,
   startPhoneAuth,
   signOutPhone,
 } from "@/lib/phone-auth";
-import { onAuthStateChanged, type ConfirmationResult } from "firebase/auth";
+import { onAuthStateChanged, signOut as firebaseSignOut, type ConfirmationResult } from "firebase/auth";
 import type { GameMode, Grade, Member, Match } from "./types";
 import { IconCategorySword, IconCategoryUser, IconCategoryUsers, IconCategoryUsersRound } from "./components/category-icons";
 import { NavIconGameList, NavIconGameMode, NavIconMyInfo } from "./components/nav-icons";
@@ -73,37 +62,20 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const [gameSettings, setGameSettings] = useState<GameSettings>(() => ({ ...DEFAULT_GAME_SETTINGS }));
   /** 사용자가 선택한 '진행중' 매치 id 목록 (여러 코트 병렬 진행 가능) */
   const [selectedPlayingMatchIds, setSelectedPlayingMatchIds] = useState<string[]>([]);
-  /** 앱 최초 실행 시 전체화면 로그인 화면 통과 여부 (세션 기준, 로그인 후 메인 표시) */
+  /** 전화 인증된 Firebase 세션이 있을 때만 true. 세션 깃발이 아니라 Auth 상태가 기준 */
   const [loginGatePassed, setLoginGatePassed] = useState(false);
   /** 오프라인 미지원: 네트워크 연결 여부. false면 쓰기 차단·배너 표시 */
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== "undefined" ? navigator.onLine : true));
   /** 로그인한 사용자 UID (프로필 Firestore 동기화용) */
   const [authUid, setAuthUid] = useState<string | null>(null);
-  /** 로그인 후 프로필 업로드 완료 여부 (true: 원격 로드됨 또는 업로드 성공. 이전에만 경기 방식·경기 목록 이용 가능) */
-  const [hasUploadedProfileAfterLogin, _setHasUploadedProfile] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem(PROFILE_UPLOADED_KEY) === "1";
-  });
-  const setHasUploadedProfileAfterLogin = useCallback((v: boolean) => {
-    _setHasUploadedProfile(v);
-    if (typeof window !== "undefined") {
-      if (v) localStorage.setItem(PROFILE_UPLOADED_KEY, "1");
-      else localStorage.removeItem(PROFILE_UPLOADED_KEY);
-    }
-  }, []);
+  /** 이 uid의 서버 프로필이 있을 때만 true. 기기 깃발을 쓰지 않아 이전 계정과 섞이지 않음 */
+  const [hasUploadedProfileAfterLogin, setHasUploadedProfileAfterLogin] = useState(false);
   /** 전화번호 로그인: 단계(idle | sending | code), 입력값, 에러, 인증 결과 */
   const [phoneStep, setPhoneStep] = useState<"idle" | "sending" | "code" | "error">("idle");
   const [phoneNumberInput, setPhoneNumberInput] = useState("");
   const [phoneCodeInput, setPhoneCodeInput] = useState("");
   const [phoneError, setPhoneError] = useState("");
   const phoneConfirmationResultRef = useRef<ConfirmationResult | null>(null);
-  /** 이메일 로그인: 입력값, 에러, 진행 중 */
-  const [emailInput, setEmailInput] = useState("");
-  const [passwordInput, setPasswordInput] = useState("");
-  const [emailError, setEmailError] = useState("");
-  const [emailLoading, setEmailLoading] = useState(false);
-  /** 이메일 인증 대기: Firebase Auth 이메일 사용자(미인증 시 활동 불가) */
-  const [authEmailUser, setAuthEmailUser] = useState<AuthUserSnapshot>(null);
   /** 하단 네비로 이동하는 화면: setting(경기 세팅) | record(경기 목록) | myinfo(나의 정보). 새로고침 시 마지막 탭 복원 */
   const [navView, setNavView] = useState<"setting" | "record" | "myinfo">(() => {
     if (typeof window === "undefined") return "setting";
@@ -469,16 +441,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
     [router, enrollGameInMyList, myInfo.uid]
   );
 
-  /** 공유 링크(?share=...): 로그인·프로필이 끝날 때까지 share만 보관 */
+  /** 공유 링크(?share=...): 전화 로그인·프로필이 끝날 때까지 보관만. 인증을 건너뛰지 않음 */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const share = searchParams.get("share");
     if (!share) return;
     sessionStorage.setItem(PENDING_SHARE_KEY, share);
-    if (!authUid) return;
-    sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-    setLoginGatePassed(true);
-  }, [searchParams, authUid]);
+  }, [searchParams]);
 
   /** 경기 목록 탭에서 공유(shareId) 경기 카드를 Firestore 최신 데이터로 갱신 → 카드가 항상 최신으로 동기화 표시. 진입 시 1회 + 25초마다 갱신 */
   useEffect(() => {
@@ -516,7 +485,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (sessionStorage.getItem(LOGIN_GATE_KEY) === "1") setLoginGatePassed(true);
+    sessionStorage.removeItem(LOGIN_GATE_KEY);
+    localStorage.removeItem(PROFILE_UPLOADED_KEY);
   }, []);
 
   /** 탭 전환 시 sessionStorage에 저장 → 새로고침 시 해당 탭 유지 */
@@ -525,41 +495,73 @@ export function GameView({ gameId }: { gameId: string | null }) {
     sessionStorage.setItem("badminton_nav_view", navView);
   }, [navView]);
 
-  /** 로그인 UID 구독 (프로필 Firestore 동기화용) */
+  /** 전화 인증된 Auth만 로그인으로 인정. 이메일만 있는 세션은 끊는다. */
   useEffect(() => {
-    const auth = getAuthInstance();
-    if (!auth) return;
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setAuthUid(user?.uid ?? null);
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+    ensureFirebase().then(() => {
+      if (cancelled) return;
+      const auth = getAuthInstance();
+      if (!auth) return;
+      unsub = onAuthStateChanged(auth, (user) => {
+        if (user && !user.phoneNumber) {
+          firebaseSignOut(auth).catch(() => {});
+          setAuthUid(null);
+          setLoginGatePassed(false);
+          setHasUploadedProfileAfterLogin(false);
+          return;
+        }
+        const uid = user?.uid ?? null;
+        const phone = user?.phoneNumber ?? undefined;
+        setAuthUid(uid);
+        setLoginGatePassed(Boolean(uid && phone));
+        if (!uid) {
+          setHasUploadedProfileAfterLogin(false);
+          const cleared = { ...DEFAULT_MYINFO };
+          setMyInfo(cleared);
+          saveMyInfo(cleared);
+          return;
+        }
+        if (phone) {
+          setMyInfo((prev) => {
+            const next = { ...prev, uid, phoneNumber: phone };
+            saveMyInfo(next);
+            return next;
+          });
+        }
+      });
     });
-    return unsub;
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, []);
 
+  /** 로그인 시 이 계정 서버 프로필만 반영. 없으면 온보딩 */
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const info = loadMyInfo();
-    setMyInfo(info);
-  }, []);
-
-  /** 로그인 시 Firestore에서 프로필 불러와 로컬에 반영. 나의 프로필에 UID 내포(연동 근거) */
-  useEffect(() => {
-    if (!authUid) return;
+    if (!authUid || !loginGatePassed) return;
+    const phone = getCurrentPhoneUser()?.phoneNumber;
     getRemoteProfile(authUid).then((remote) => {
-      const withUid = { ...(remote ?? {}), uid: authUid } as MyInfo;
-      if (!withUid.name) withUid.name = "";
-      if (!withUid.gender) withUid.gender = "M";
       if (remote) {
+        const withUid: MyInfo = {
+          ...DEFAULT_MYINFO,
+          ...remote,
+          uid: authUid,
+          phoneNumber: phone ?? remote.phoneNumber,
+        };
+        if (!withUid.name) withUid.name = "";
+        if (!withUid.gender) withUid.gender = "M";
         setMyInfo(withUid);
         saveMyInfo(withUid);
         setHasUploadedProfileAfterLogin(true);
       } else {
-        const next = { ...DEFAULT_MYINFO, uid: authUid };
+        const next: MyInfo = { ...DEFAULT_MYINFO, uid: authUid, phoneNumber: phone };
         setMyInfo(next);
         saveMyInfo(next);
         setHasUploadedProfileAfterLogin(false);
       }
     });
-  }, [authUid]);
+  }, [authUid, loginGatePassed]);
 
   /** 프로필 필수 항목 유무 (동기화 후 사용자가 지워도 검사) */
   const hasRequiredProfileFields = (): boolean => {
@@ -573,10 +575,11 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const isProfileComplete = hasUploadedProfileAfterLogin && hasRequiredProfileFields();
 
   useEffect(() => {
+    if (!loginGatePassed) return;
     if (!isProfileComplete && navView !== "myinfo") {
       setNavView("myinfo");
     }
-  }, [isProfileComplete, navView]);
+  }, [isProfileComplete, navView, loginGatePassed]);
 
   useEffect(() => {
     if (!loginGatePassed || !isProfileComplete || typeof window === "undefined") return;
@@ -696,6 +699,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
   const uploadProfileToFirestore = useCallback(async () => {
     const uid = getCurrentUserUid();
     if (!uid) return;
+    const phone = getCurrentPhoneUser()?.phoneNumber ?? myInfo.phoneNumber;
+    const toSave = { ...myInfo, uid, phoneNumber: phone };
     if (!myInfo.name?.trim()) {
       setLoginMessage("이름을 입력한 뒤 업로드해 주세요.");
       setTimeout(() => setLoginMessage(null), 3000);
@@ -706,8 +711,15 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setTimeout(() => setLoginMessage(null), 3000);
       return;
     }
-    const ok = await setRemoteProfile(uid, myInfo);
+    if (!phone) {
+      setLoginMessage("전화번호 로그인 후 업로드해 주세요.");
+      setTimeout(() => setLoginMessage(null), 3000);
+      return;
+    }
+    const ok = await setRemoteProfile(uid, toSave);
     if (ok) {
+      setMyInfo(toSave);
+      saveMyInfo(toSave);
       setHasUploadedProfileAfterLogin(true);
       setLoginMessage("프로필이 클라우드에 업로드되었습니다.");
       setTimeout(() => setLoginMessage(null), 3000);
@@ -716,19 +728,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
       setTimeout(() => setLoginMessage(null), 3000);
     }
   }, [myInfo]);
-
-  /** 이메일 인증 상태 구독: 인증 완료 시 로그인 통과 처리(유령 회원 방지) */
-  useEffect(() => {
-    if (!isEmailAuthAvailable()) return;
-    const unsubscribe = subscribeEmailAuthState((user) => {
-      setAuthEmailUser(user);
-      if (user?.emailVerified && typeof window !== "undefined") {
-        sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-        setLoginGatePassed(true);
-      }
-    });
-    return unsubscribe;
-  }, []);
 
   useEffect(() => {
     if (!mounted || effectiveGameId === null) return;
@@ -1272,77 +1271,16 @@ export function GameView({ gameId }: { gameId: string | null }) {
   }
 
   if (!loginGatePassed) {
-    /** 이메일로 가입/로그인했으나 아직 미인증 → 인증 메일에서 링크를 눌러야 활동 가능 */
-    if (authEmailUser && !authEmailUser.emailVerified) {
-      return (
-        <div className="min-h-screen min-h-[100dvh] bg-[#f5f5f7] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
-          <div className="w-full max-w-sm flex flex-col items-center gap-6">
-            <div className="text-center space-y-2">
-              <h1 className="text-xl font-bold text-[#1d1d1f] tracking-tight">이메일 인증이 필요합니다</h1>
-              <p className="text-sm text-slate-600">
-                <span className="font-medium text-slate-700">{authEmailUser.email}</span> 주소로 인증 메일을 보냈습니다.
-              </p>
-              <p className="text-sm text-slate-500">
-                메일에서 링크를 눌러 인증을 완료해 주세요. (스팸함도 확인해 주세요.)
-              </p>
-            </div>
-            <div className="w-full space-y-2">
-              <button
-                type="button"
-                disabled={emailLoading}
-                onClick={async () => {
-                  setEmailError("");
-                  setEmailLoading(true);
-                  try {
-                    await ensureFirebase();
-                    await sendVerificationEmailAgain();
-                    setEmailError("");
-                    setLoginMessage("인증 메일을 다시 보냈습니다.");
-                    setTimeout(() => setLoginMessage(null), 4000);
-                  } catch (e) {
-                    setEmailError(e instanceof Error ? e.message : "인증 메일 전송에 실패했습니다.");
-                  } finally {
-                    setEmailLoading(false);
-                  }
-                }}
-                className="w-full py-3 rounded-xl text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] disabled:opacity-50 transition-colors btn-tap"
-              >
-                인증 메일 다시 보내기
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  await signOutEmail();
-                  setMyInfo((prev) => ({ ...prev, email: undefined }));
-                  setAuthEmailUser(null);
-                }}
-                className="w-full py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors btn-tap"
-              >
-                로그아웃
-              </button>
-              {emailError && <p className="text-xs text-amber-600" role="alert">{emailError}</p>}
-              {loginMessage && <p className="text-xs text-slate-600">{loginMessage}</p>}
-            </div>
-            <p className="text-center pt-2">
-              <a href="/privacy.html" target="_blank" rel="noopener noreferrer" className="text-xs text-slate-500 underline hover:text-slate-700">개인정보 처리방침</a>
-            </p>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="min-h-screen min-h-[100dvh] bg-[#f5f5f7] text-[#1d1d1f] flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-sm flex flex-col items-center gap-8">
           <div className="text-center space-y-2">
             <h1 className="text-2xl font-bold text-[#1d1d1f] tracking-tight">경기 이사</h1>
-            <p className="text-sm text-slate-500">배드민턴 경기 명단·대진·결과를 함께 관리하세요</p>
+            <p className="text-sm text-slate-500">전화번호로 본인 확인한 뒤 이용합니다. 인증문자를 받으면 가입과 로그인이 됩니다.</p>
           </div>
           <div className="w-full space-y-3">
-            {/* 전화번호 로그인 */}
-            {isPhoneAuthAvailable() && (
-              <div className="space-y-2">
-                  <p className="text-xs text-slate-600 font-medium">전화번호로 로그인</p>
+            <div className="space-y-2">
+                  <p className="text-xs text-slate-600 font-medium">전화번호</p>
                   {phoneStep === "idle" && (
                     <>
                       <input
@@ -1441,13 +1379,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
                             try {
                               const { phoneNumber } = await confirmPhoneCode(conf, code);
                               const uid = getCurrentUserUid();
-                              const nextInfo = { ...myInfo, phoneNumber, uid: uid ?? undefined };
+                              const nextInfo = { ...DEFAULT_MYINFO, ...myInfo, phoneNumber, uid: uid ?? undefined };
                               setMyInfo(nextInfo);
                               saveMyInfo(nextInfo);
-                              if (typeof window !== "undefined") {
-                                sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-                                setLoginGatePassed(true);
-                              }
+                              setPhoneStep("idle");
                             } catch (e) {
                               const msg = e instanceof Error ? e.message : "인증에 실패했습니다.";
                               setPhoneError(msg);
@@ -1467,117 +1402,6 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     </p>
                   )}
                 </div>
-            )}
-
-            {/* 이메일 로그인 */}
-            {isEmailAuthAvailable() && (
-              <div className="space-y-2">
-                <p className="text-xs text-slate-600 font-medium">이메일로 로그인</p>
-                <input
-                  type="email"
-                  value={emailInput}
-                  onChange={(e) => { setEmailInput(e.target.value); setEmailError(""); }}
-                  placeholder="이메일"
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                  aria-label="이메일"
-                  autoComplete="email"
-                />
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => { setPasswordInput(e.target.value); setEmailError(""); }}
-                  placeholder="비밀번호"
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
-                  aria-label="비밀번호"
-                  autoComplete="current-password"
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={emailLoading || !emailInput.trim() || !passwordInput}
-                    onClick={async () => {
-                      const email = emailInput.trim();
-                      const password = passwordInput;
-                      if (!email || !password) return;
-                      setEmailError("");
-                      setEmailLoading(true);
-                      try {
-                        await ensureFirebase();
-                        const { email: signedEmail, needsVerification } = await signUpWithEmail(email, password);
-                        const uid = getCurrentUserUid();
-                        const nextInfo = { ...myInfo, email: signedEmail, uid: uid ?? undefined };
-                        setMyInfo(nextInfo);
-                        saveMyInfo(nextInfo);
-                        if (!needsVerification && typeof window !== "undefined") {
-                          sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-                          setLoginGatePassed(true);
-                        }
-                        setEmailInput("");
-                        setPasswordInput("");
-                      } catch (e: unknown) {
-                        const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : "";
-                        const msg =
-                          code === "auth/email-already-in-use"
-                            ? "이미 가입된 이메일입니다. 로그인을 사용하세요."
-                            : code === "auth/weak-password"
-                              ? "비밀번호는 6자 이상이어야 합니다."
-                              : code === "auth/invalid-email"
-                                ? "올바른 이메일 형식이 아닙니다."
-                                : e instanceof Error ? e.message : "가입에 실패했습니다.";
-                        setEmailError(msg);
-                      } finally {
-                        setEmailLoading(false);
-                      }
-                    }}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-tap"
-                  >
-                    가입
-                  </button>
-                  <button
-                    type="button"
-                    disabled={emailLoading || !emailInput.trim() || !passwordInput}
-                    onClick={async () => {
-                      const email = emailInput.trim();
-                      const password = passwordInput;
-                      if (!email || !password) return;
-                      setEmailError("");
-                      setEmailLoading(true);
-                      try {
-                        await ensureFirebase();
-                        const { email: signedEmail, emailVerified } = await signInWithEmailAuth(email, password);
-                        const uid = getCurrentUserUid();
-                        const nextInfo = { ...myInfo, email: signedEmail, uid: uid ?? undefined };
-                        setMyInfo(nextInfo);
-                        saveMyInfo(nextInfo);
-                        if (emailVerified && typeof window !== "undefined") {
-                          sessionStorage.setItem(LOGIN_GATE_KEY, "1");
-                          setLoginGatePassed(true);
-                        }
-                      } catch (e: unknown) {
-                        const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : "";
-                        const msg =
-                          code === "auth/invalid-credential" || code === "auth/user-not-found" || code === "auth/wrong-password"
-                            ? "이메일 또는 비밀번호가 맞지 않습니다."
-                            : code === "auth/invalid-email"
-                              ? "올바른 이메일 형식이 아닙니다."
-                              : e instanceof Error ? e.message : "로그인에 실패했습니다.";
-                        setEmailError(msg);
-                      } finally {
-                        setEmailLoading(false);
-                      }
-                    }}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-[#0071e3] hover:bg-[#0077ed] disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-tap"
-                  >
-                    로그인
-                  </button>
-                </div>
-                {emailError && (
-                  <p className="text-xs text-amber-600" role="alert">
-                    {emailError}
-                  </p>
-                )}
-              </div>
-            )}
 
             <p className="text-center pt-4">
               <a
@@ -2805,35 +2629,26 @@ export function GameView({ gameId }: { gameId: string | null }) {
         )}
         {navIndex === 2 && (
           <div key="myinfo" className="pt-4 space-y-2 animate-panel-enter">
-            {/* 로그인 상태: 수단 명시 + 로그아웃 (로그아웃 시 로그인 화면으로 이동) */}
-            {(isPhoneAuthAvailable() && getCurrentPhoneUser()) || (isEmailAuthAvailable() && getCurrentEmailUser()) ? (
+            {!isProfileComplete && (
+              <p className="text-sm text-slate-600 px-1">이름과 생년월일을 입력한 뒤 업로드하면 경기를 이용할 수 있습니다.</p>
+            )}
+            {/* 로그인 상태: 전화번호 + 로그아웃 */}
+            {loginGatePassed ? (
               <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
                 <div className="px-3 py-3 space-y-3">
                   <p className="text-xs text-slate-500">
-                    로그인 수단:{" "}
-                    {[
-                      isPhoneAuthAvailable() && getCurrentPhoneUser() &&
-                        `전화번호 (${getCurrentPhoneUser()?.phoneNumber || ""})`,
-                      isEmailAuthAvailable() && getCurrentEmailUser() &&
-                        `이메일 (${getCurrentEmailUser()?.email || ""})`,
-                    ]
-                      .filter(Boolean)
-                      .join(", ")}
+                    로그인: 전화번호 ({getCurrentPhoneUser()?.phoneNumber || myInfo.phoneNumber || ""})
                   </p>
                   <button
                     type="button"
                     onClick={async () => {
-                      if (isPhoneAuthAvailable() && getCurrentPhoneUser()) await signOutPhone();
-                      if (isEmailAuthAvailable() && getCurrentEmailUser()) await signOutEmail();
-                      setMyInfo((prev) => {
-                        const next = { ...prev, phoneNumber: undefined, email: undefined, uid: undefined };
-                        saveMyInfo(next);
-                        return next;
-                      });
-                      if (typeof window !== "undefined") {
-                        sessionStorage.removeItem(LOGIN_GATE_KEY);
-                        setLoginGatePassed(false);
-                      }
+                      await signOutPhone();
+                      const cleared = { ...DEFAULT_MYINFO };
+                      setMyInfo(cleared);
+                      saveMyInfo(cleared);
+                      setHasUploadedProfileAfterLogin(false);
+                      setLoginGatePassed(false);
+                      setAuthUid(null);
                       setPhoneStep("idle");
                       setPhoneNumberInput("");
                       setPhoneCodeInput("");
@@ -2849,7 +2664,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             ) : null}
 
             {/* 프로필 = 이름 + 성별기호 + 급수기호. 나의 프로필 (로그인 시): 요약 + 프로필 수정 → 클릭 시 상세 폼 */}
-            {(getCurrentPhoneUser() || getCurrentEmailUser()) && (
+            {loginGatePassed && (
               <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06)] border border-[#e8e8ed] overflow-hidden card-app card-app-interactive">
                 <div className="px-2.5 py-2 border-b border-[#e8e8ed]">
                   <h3 className="text-sm font-semibold text-slate-800">나의 프로필</h3>
@@ -2977,15 +2792,12 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <label className="text-xs font-medium text-slate-600 shrink-0 w-28">전화번호</label>
                 <input
                   type="tel"
-                  value={myInfo.phoneNumber ?? ""}
-                  onChange={(e) => {
-                    const next = { ...myInfo, phoneNumber: e.target.value.trim() || undefined };
-                    setMyInfo(next);
-                    saveMyInfo(next);
-                  }}
-                  placeholder="010-1234-5678"
-                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-[#fbfbfd] text-[#1d1d1f] text-sm focus:outline-none focus:ring-2 focus:ring-[#0071e3]/25 focus:border-[#0071e3]"
+                  value={myInfo.phoneNumber ?? getCurrentPhoneUser()?.phoneNumber ?? ""}
+                  readOnly
+                  placeholder="로그인 전화번호"
+                  className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-[#d2d2d7] bg-slate-100 text-[#1d1d1f] text-sm cursor-default"
                   aria-label="전화번호"
+                  title="로그인에 사용한 전화번호입니다."
                 />
               </div>
               <div className="flex items-center gap-1.5">
