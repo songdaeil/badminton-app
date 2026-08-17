@@ -49,7 +49,7 @@ function applySharedWriteResult(
   }
 }
 
-/** 내 프로필을 명단에 넣는다. 이미 있으면 그 칸을 나로 표시하고, 가득 차면 그대로 둔다. */
+/** 내 프로필을 명단에 넣는다. 이미 있으면 그 칸을 나로 표시하고, 점수가 있거나 가득 차면 넣지 않는다. */
 function joinSelfToGameData(
   data: GameData,
   profile: { uid?: string | null; name?: string; gender?: "M" | "F"; grade?: Grade }
@@ -62,6 +62,8 @@ function joinSelfToGameData(
   if (existing) {
     return { ...data, myProfileMemberId: existing.id };
   }
+  const hasScore = (data.matches ?? []).some((m) => m.score1 != null || m.score2 != null);
+  if (hasScore) return data;
   const mode = GAME_MODES.find((m) => m.id === data.gameMode) ?? GAME_MODES[0];
   if (members.length >= (mode.maxPlayers ?? 12)) return data;
   const newId = createId();
@@ -435,7 +437,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
     };
   }, [effectiveGameId, syncGameListToFirebase]);
 
-  /** 공유 링크를 열면 내 목록에 넣고, 명단에 없으면 나를 넣는다. */
+  /** 공유 링크를 열면 내 목록에 넣는다. 점수가 있기 전에만 명단에 나를 넣는다. */
   const processShareAndOpenDetail = useCallback(
     (share: string) => {
       const existingIds = loadGameList();
@@ -444,17 +446,23 @@ export function GameView({ gameId }: { gameId: string | null }) {
       );
       const uid = myInfo.uid ?? getCurrentUserUid();
       const openJoined = (localId: string, data: GameData) => {
+        const wasOnRoster = Boolean(uid && (data.members ?? []).some((m) => m.linkedUid === uid));
         const joined = joinSelfToGameData(data, {
           uid,
           name: myInfo.name,
           gender: myInfo.gender,
           grade: myInfo.grade,
         });
+        const nowOnRoster = Boolean(uid && (joined.members ?? []).some((m) => m.linkedUid === uid));
         saveGame(localId, joined);
         enrollGameInMyList(localId);
         setNavView("record");
         setSelectedGameId(localId);
         router.replace("/?view=record", { scroll: false });
+        if (uid && !wasOnRoster && !nowOnRoster && (data.matches ?? []).some((m) => m.score1 != null || m.score2 != null)) {
+          setShareToast("이미 점수가 있어 명단에 넣지 않았습니다. 경기는 볼 수 있습니다.");
+          setTimeout(() => setShareToast(null), 4000);
+        }
       };
       if (alreadyInListId != null) {
         openJoined(alreadyInListId, loadGame(alreadyInListId));
@@ -1136,6 +1144,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
 
   const addMember = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
     if (!isGameOwner) return;
+    if (hasSavedScore) return;
     const trimmed = name.trim();
     if (!trimmed) return;
     const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
@@ -1160,12 +1169,13 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
-  }, [gameModeId, members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, isGameOwner]);
+  }, [gameModeId, members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, isGameOwner, hasSavedScore]);
 
   /** 프로필로 나 추가 시 사용: 나의 프로필에 내포된 UID로 연동(linkedUid) 멤버 추가 후 '나'로 설정 */
   const addMemberAsMe = useCallback((name: string, gender: "M" | "F", grade: Grade) => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    if (hasSavedScore) return;
     const uid = myInfo.uid ?? getCurrentUserUid();
     const max = GAME_MODES.find((m) => m.id === gameModeId)?.maxPlayers ?? 12;
     if (members.length >= max) return;
@@ -1190,9 +1200,10 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
-  }, [gameModeId, myInfo.uid, members, effectiveGameId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds]);
+  }, [gameModeId, myInfo.uid, members, effectiveGameId, myInfo.name, myInfo.gender, myInfo.grade, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, hasSavedScore]);
 
   const removeMember = useCallback((id: string) => {
+    if (hasSavedScore) return;
     const uid = myInfo.uid ?? getCurrentUserUid();
     const target = members.find((m) => m.id === id);
     const isSelf = Boolean(uid && target?.linkedUid && target.linkedUid === uid);
@@ -1216,9 +1227,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
     });
     saveGame(effectiveGameId, payload);
     /* Firestore 업로드는 디바운스 runSave에서 일괄 처리 */
-  }, [members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, myInfo.uid, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, isGameOwner]);
+  }, [members, effectiveGameId, myProfileMemberId, myInfo.name, myInfo.gender, myInfo.grade, myInfo.uid, gameName, gameModeId, gameSettings, matches, selectedPlayingMatchIds, isGameOwner, hasSavedScore]);
 
-  /** 경기 결과 = 경기 현황(matches)만으로 산출. 명단에서 인원 삭제해도 결과는 현황 기준으로 유지 */
+  /** 경기 결과 = 경기 현황(matches)만으로 산출 */
   const ranking = useMemo(
     () => buildRankingFromMatchesOnly(matches, GRADE_ORDER),
     [matches]
@@ -1693,7 +1704,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
               경기 방식으로 경기를 만들면 내가 명단에 들어갑니다. 공유 링크를 열면 같은 경기에 참여하고 내 목록에도 남습니다. 만든이는 명단·대진을 관리하고, 참여자는 점수와 진행을 함께 기록합니다.
             </p>
             <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-              만든이가 경기를 삭제하면 다른 사람 목록에서도 사라집니다. 참여자는 목록에서만 뺍니다. 점수가 있는 매치는 참여자가 덮지 않고, 대진도 다시 만들지 않습니다.
+              만든이가 경기를 삭제하면 다른 사람 목록에서도 사라집니다. 참여자는 목록에서만 뺍니다. 점수가 있으면 명단과 대진을 바꾸지 않습니다.
             </p>
             <button
               type="button"
@@ -2377,7 +2388,9 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <div>
                 <h3 className="text-base font-semibold text-slate-800">경기 명단</h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {isGameOwner
+                  {hasSavedScore
+                    ? "점수가 있으면 명단과 대진을 바꾸지 않습니다."
+                    : isGameOwner
                     ? "이름 추가·삭제는 만든이만 합니다. 공유 링크를 연 사람은 명단에 들어갑니다."
                     : "공유 링크로 들어오면 명단에 들어갑니다. 대진은 만든이만 바꿉니다."}{" "}
                   <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>🔃</span>=연동(Firebase 계정) · <span className="inline-block" style={{ filter: "grayscale(1) brightness(0.9) contrast(1.1)" }}>⏸️</span>=비연동
@@ -2415,7 +2428,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                         </span>
                       </td>
                       <td className="border-l border-slate-300 px-1 py-0 align-middle">
-                        {(isGameOwner || Boolean((myInfo.uid ?? getCurrentUserUid()) && m.linkedUid && (myInfo.uid ?? getCurrentUserUid()) === m.linkedUid)) ? (
+                        {!hasSavedScore && (isGameOwner || Boolean((myInfo.uid ?? getCurrentUserUid()) && m.linkedUid && (myInfo.uid ?? getCurrentUserUid()) === m.linkedUid)) ? (
                         <button
                           type="button"
                           onClick={() => removeMember(m.id)}
@@ -2433,7 +2446,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 </tbody>
               </table>
             </div>
-            {isGameOwner && (
+            {isGameOwner && !hasSavedScore && (
             <div className="border-t border-[#e8e8ed] px-2 py-2">
               <div className="flex flex-row items-center gap-1.5 flex-nowrap overflow-hidden">
                 <span className="text-xs font-medium text-slate-600 shrink-0 whitespace-nowrap">인원 추가</span>
@@ -2488,7 +2501,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
             </div>
             )}
             <div className="border-t border-[#e8e8ed] px-2 py-2">
-              {!isOnRoster && (
+              {!isOnRoster && !hasSavedScore && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -2534,7 +2547,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                     return;
                   }
                   if (hasSavedScore) {
-                    setShareToast("점수가 있는 경기는 대진을 다시 만들지 않습니다.");
+                    setShareToast("점수가 있으면 명단과 대진을 바꾸지 않습니다.");
                     setTimeout(() => setShareToast(null), 3000);
                     return;
                   }
@@ -2552,8 +2565,8 @@ export function GameView({ gameId }: { gameId: string | null }) {
               <p className="text-xs text-slate-500 mt-1.5">
                 <span className="font-numeric">총{members.length}명-총{members.length >= gameMode.minPlayers ? getTargetTotalGames(members.length) : "-"}경기-인당{members.length >= gameMode.minPlayers && getTargetTotalGames(members.length) > 0 ? Math.round((getTargetTotalGames(members.length) * 4) / members.length) : "-"}경기</span>
               </p>
-              {hasSavedScore && isGameOwner && (
-                <p className="text-xs text-slate-400 mt-1 text-center">점수가 있으면 대진을 다시 만들지 않습니다.</p>
+              {hasSavedScore && (
+                <p className="text-xs text-slate-400 mt-1 text-center">점수가 있으면 명단과 대진을 바꾸지 않습니다.</p>
               )}
               {members.length < gameMode.minPlayers && (
                 <p className="text-xs text-slate-400 mt-1 text-center">경기 인원은 <span className="font-numeric">{gameMode.minPlayers}</span>~<span className="font-numeric">{gameMode.maxPlayers}</span>명이어야 합니다.</p>
@@ -2960,7 +2973,7 @@ export function GameView({ gameId }: { gameId: string | null }) {
                 <ul className="text-xs text-slate-600 leading-relaxed list-disc pl-4 space-y-1">
                   <li>전화번호로 본인 확인합니다. 처음이면 이름과 생년월일을 넣습니다.</li>
                   <li>경기를 만들면 내가 명단에 들어가고, 공유 링크를 열면 같은 경기에 참여합니다.</li>
-                  <li>점수는 함께 저장합니다. 이미 있는 점수는 만든이만 고칩니다.</li>
+                  <li>점수는 함께 저장합니다. 점수가 있으면 명단과 대진을 바꾸지 않습니다.</li>
                 </ul>
               </div>
             </div>
